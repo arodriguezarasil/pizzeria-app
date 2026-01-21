@@ -5,6 +5,9 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
 <title>Iniciar sesión</title>
+<!-- Firebase (compat) para login con Google -->
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-auth-compat.js"></script>
 
 <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600&family=Montserrat:wght@400;500;800;900&display=swap" rel="stylesheet">
 
@@ -129,6 +132,10 @@
     opacity:.55;
     cursor:not-allowed;
   }
+  .btn.google.enabled{
+    opacity:1;
+    cursor:pointer;
+  }
 
   .btn.link{
     background:transparent;
@@ -186,7 +193,7 @@
         <!-- ✅ Nuevo: olvidé contraseña -->
         <button id="btnForgot" class="btn link forgot">¿Has olvidado la contraseña?</button>
 
-        <button class="btn google" disabled>🔒 Iniciar sesión con Google (próximamente)</button>
+        <button id="btnGoogle" class="btn google" disabled>🔒 Iniciar sesión con Google</button>
         <button id="btnGoRegister" class="btn link">No tengo cuenta → Registrarme</button>
         <button id="btnBackWelcome" class="btn link">Volver</button>
       </div>
@@ -212,11 +219,95 @@
 
   const $ = (id) => document.getElementById(id);
   const msg = $("msg");
+  const btnGoogle = $("btnGoogle");
 
   function showMsg(text, ok){
     msg.style.display = "block";
     msg.textContent = text;
     msg.className = "msg " + (ok ? "ok" : "err");
+  }
+
+  // ========= Firebase / Google Login =========
+  function initFirebase(){
+    // Esperar a que Firebase esté disponible
+    if (typeof firebase === 'undefined') {
+      console.warn("Firebase SDK aún no está cargado, reintentando...");
+      setTimeout(initFirebase, 100);
+      return;
+    }
+
+    const firebaseConfig = {
+      apiKey: "AIzaSyDAfFywakwJfbMq9TesUXjd1x3WEGHia-Y",
+      authDomain: "ilfornodialessandro.firebaseapp.com",
+      projectId: "ilfornodialessandro",
+      storageBucket: "ilfornodialessandro.firebasestorage.app",
+      messagingSenderId: "292923743751",
+      appId: "1:292923743751:web:7837ce91edb2e4665d94a2",
+      measurementId: "G-HCGRKDY2FZ"
+    };
+
+    if (!firebaseConfig.apiKey || firebaseConfig.apiKey.startsWith("PON_AQUI")) {
+      console.warn("Firebase no está configurado todavía. Edita public/login.html con tu firebaseConfig.");
+      return;
+    }
+
+    try{
+      // Verificar si ya está inicializado
+      if (firebase.apps && firebase.apps.length > 0) {
+        console.log("Firebase ya está inicializado");
+      } else {
+        firebase.initializeApp(firebaseConfig);
+        console.log("✅ Firebase inicializado correctamente");
+      }
+      
+      btnGoogle.disabled = false;
+      btnGoogle.classList.add("enabled");
+      btnGoogle.textContent = "🔐 Iniciar sesión con Google";
+      console.log("✅ Botón de Google habilitado");
+    } catch(e){
+      console.error("❌ Error inicializando Firebase:", e);
+      btnGoogle.textContent = "❌ Error cargando Google";
+    }
+  }
+
+  async function doGoogleLogin(){
+    try{
+      const auth = firebase.auth();
+      const provider = new firebase.auth.GoogleAuthProvider();
+
+      btnGoogle.disabled = true;
+      btnGoogle.textContent = "Conectando con Google...";
+
+      const result = await auth.signInWithPopup(provider);
+      const user = result.user;
+      if (!user){
+        showMsg("No se pudo completar el login con Google.", false);
+        return;
+      }
+
+      const idToken = await user.getIdToken();
+
+      const r = await fetch("/api/login/google", {
+        method:"POST",
+        headers:{ "Content-Type":"application/json" },
+        credentials:"include",
+        body: JSON.stringify({ idToken })
+      });
+      const d = await r.json().catch(()=>({}));
+
+      if (!r.ok){
+        showMsg(d.error || "Error iniciando sesión con Google.", false);
+        return;
+      }
+
+      window.location.replace("/index.html");
+    } catch(e){
+      console.error("Google login error:", e);
+      showMsg("No se pudo completar el login con Google.", false);
+    } finally {
+      btnGoogle.disabled = false;
+      btnGoogle.textContent = "Iniciar sesión con Google";
+    }
   }
 
   async function doLogin(){
@@ -264,6 +355,10 @@
   $("btnForgot").addEventListener("click", ()=> window.location.href="/forgot-password.html");
   $("btnGoRegister").addEventListener("click", ()=> window.location.href="/register.html");
   $("btnBackWelcome").addEventListener("click", ()=> window.location.href="/welcome.html");
+  btnGoogle.addEventListener("click", () => {
+    if (btnGoogle.disabled) return;
+    doGoogleLogin();
+  });
 
   // Si ya está logueado, fuera de aquí
   (async()=>{
@@ -273,6 +368,14 @@
       if (d.loggedIn) window.location.replace("/index.html");
     } catch {}
   })();
+
+  // Inicializar Firebase cuando la página esté completamente cargada
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initFirebase);
+  } else {
+    // Si ya está cargado, esperar un poco a que Firebase SDK esté disponible
+    setTimeout(initFirebase, 100);
+  }
 </script>
 </body>
 </html>

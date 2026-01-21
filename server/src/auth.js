@@ -1,16 +1,19 @@
 import crypto from "crypto";
-import { db } from "./db.js";
+import { queryOne, pool } from "./db.js";
 import bcrypt from "bcryptjs";
 
-export function createSession(userId, sessionSecret) {
+export async function createSession(userId, sessionSecret) {
   const sid = crypto.randomBytes(24).toString("hex");
   const now = new Date();
   const expires = new Date(now.getTime() + 1000 * 60 * 60 * 24 * 7); // 7 días
 
-  db.prepare(`
-    INSERT INTO sessions (id, user_id, expires_at, created_at)
-    VALUES (?, ?, ?, ?)
-  `).run(sid, userId, expires.toISOString(), now.toISOString());
+  await pool.query(
+    `
+      INSERT INTO sessions (id, user_id, expires_at, created_at)
+      VALUES ($1, $2, $3, $4)
+    `,
+    [sid, userId, expires.toISOString(), now.toISOString()]
+  );
 
   // Cookie value firmada simple
   const sig = crypto.createHmac("sha256", sessionSecret).update(sid).digest("hex");
@@ -35,11 +38,11 @@ function timingSafeEqual(a, b) {
   return crypto.timingSafeEqual(ba, bb);
 }
 
-export function destroySession(sessionId) {
-  db.prepare("DELETE FROM sessions WHERE id = ?").run(sessionId);
+export async function destroySession(sessionId) {
+  await pool.query("DELETE FROM sessions WHERE id = $1", [sessionId]);
 }
 
-export function ensureAdminFromEnv() {
+export async function ensureAdminFromEnv() {
   const username = String(process.env.ADMIN_USERNAME || "").trim().toLowerCase();
   const email = String(process.env.ADMIN_EMAIL || "").trim().toLowerCase();
   const password = String(process.env.ADMIN_PASSWORD || "");
@@ -49,16 +52,19 @@ export function ensureAdminFromEnv() {
     return;
   }
 
-  const exists = db.prepare("SELECT id FROM users WHERE role='ADMIN' LIMIT 1").get();
+  const exists = await queryOne("SELECT id FROM users WHERE role='ADMIN' LIMIT 1");
   if (exists) return;
 
   const hash = bcrypt.hashSync(password, 12);
   const createdAt = new Date().toISOString();
 
-  db.prepare(`
-    INSERT INTO users (username, email, password_hash, role, status, created_at)
-    VALUES (?, ?, ?, 'ADMIN', 'APPROVED', ?)
-  `).run(username, email, hash, createdAt);
+  await pool.query(
+    `
+      INSERT INTO users (username, email, password_hash, role, status, created_at)
+      VALUES ($1, $2, $3, 'ADMIN', 'APPROVED', $4)
+    `,
+    [username, email, hash, createdAt]
+  );
 
   console.log("✅ Admin creado desde .env:", username, email);
 }

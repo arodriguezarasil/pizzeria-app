@@ -11,7 +11,7 @@ function getTransporter() {
   const pass = process.env.SMTP_PASS;
 
   if (!host || !user || !pass) {
-    throw new Error("SMTP no configurado (falta host/user/pass)");
+    return null; // Retorna null en lugar de lanzar error
   }
 
   return nodemailer.createTransport({
@@ -27,10 +27,15 @@ function getTransporter() {
 ========================= */
 export async function sendApprovalEmail({ toAdminEmail, username, email, approveUrl, rejectUrl }) {
   if (!toAdminEmail) {
-    throw new Error("ADMIN_EMAIL no configurado");
+    console.warn("⚠️  ADMIN_EMAIL no configurado, no se puede enviar email de aprobación");
+    return { success: false, reason: "ADMIN_EMAIL no configurado" };
   }
 
   const transporter = getTransporter();
+  if (!transporter) {
+    console.warn("⚠️  SMTP no configurado, no se puede enviar email de aprobación");
+    return { success: false, reason: "SMTP no configurado" };
+  }
 
   const html = `
     <div style="font-family:Arial;line-height:1.5">
@@ -50,12 +55,18 @@ export async function sendApprovalEmail({ toAdminEmail, username, email, approve
     </div>
   `;
 
-  await transporter.sendMail({
-    from: process.env.SMTP_USER,
-    to: toAdminEmail,
-    subject: `Solicitud de registro: ${username}`,
-    html
-  });
+  try {
+    await transporter.sendMail({
+      from: process.env.SMTP_USER,
+      to: toAdminEmail,
+      subject: `Solicitud de registro: ${username}`,
+      html
+    });
+    return { success: true };
+  } catch (e) {
+    console.error("❌ Error enviando email de aprobación:", e.message);
+    return { success: false, reason: e.message };
+  }
 }
 
 /* =========================
@@ -69,7 +80,8 @@ export async function sendPasswordResetEmail({ to, resetUrl }) {
   const pass = process.env.SMTP_PASS;
 
   if (!host || !user || !pass) {
-    throw new Error("SMTP no configurado (falta host/user/pass)");
+    console.warn("⚠️  SMTP no configurado, no se puede enviar email de reset de contraseña");
+    return { success: false, reason: "SMTP no configurado" };
   }
 
   const transporter = nodemailer.createTransport({
@@ -92,12 +104,18 @@ export async function sendPasswordResetEmail({ to, resetUrl }) {
     </div>
   `;
 
-  await transporter.sendMail({
-    from: user,
-    to,
-    subject: `Restablecer contraseña`,
-    html
-  });
+  try {
+    await transporter.sendMail({
+      from: user,
+      to,
+      subject: `Restablecer contraseña`,
+      html
+    });
+    return { success: true };
+  } catch (e) {
+    console.error("❌ Error enviando email de reset:", e.message);
+    return { success: false, reason: e.message };
+  }
 }
 
 /* =========================

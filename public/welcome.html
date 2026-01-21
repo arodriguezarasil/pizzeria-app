@@ -4,6 +4,9 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
 <title>Bienvenido</title>
+<!-- Firebase (compat) para login con Google -->
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-auth-compat.js"></script>
 <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600&family=Montserrat:wght@400;500&display=swap" rel="stylesheet">
 <style>
   body{ margin:0; font-family:Montserrat,Arial; background:#2b2b2b; color:#fff; min-height:100vh; display:flex; align-items:center; justify-content:center; padding:18px; }
@@ -12,9 +15,11 @@
   .inner{ padding:22px; }
   h1{ margin:10px 0 6px; font-family:"Playfair Display",serif; color:#8c1d18; letter-spacing:1px; }
   .muted{ color:#666; font-size:13px; margin:0 0 16px; }
-  .btn{ width:100%; border:1px solid #ddd; background:#fff; padding:12px 14px; border-radius:12px; font-weight:900; cursor:pointer; margin-top:10px; }
+  .btn{ width:100%; border:1px solid #ddd; background:#fff; padding:12px 14px; border-radius:12px; font-weight:900; cursor:pointer; margin-top:10px; transition: opacity 0.2s ease, transform 0.1s ease; }
+  .btn:hover{ transform: translateY(-1px); }
   .btn.primary{ background:#8c1d18; border-color:#8c1d18; color:#fff; }
   .btn.google{ opacity:.6; cursor:not-allowed; }
+  .btn.google.enabled{ opacity:1; cursor:pointer; background:#fff; border-color:#4285f4; color:#333; }
 </style>
 </head>
 <body>
@@ -24,10 +29,103 @@
       <p class="muted">Elige una opción para continuar.</p>
 
       <button class="btn primary" onclick="location.href='/login.html'">Iniciar sesión</button>
-      <button class="btn google" title="Próximamente" disabled>Iniciar sesión con Google (Próximamente)</button>
+      <button id="btnGoogle" class="btn google" disabled>🔒 Iniciar sesión con Google</button>
       <button class="btn" onclick="location.href='/register.html'">Registrarse</button>
     </div>
   </div>
 
+<script>
+  const btnGoogle = document.getElementById("btnGoogle");
+
+  // ========= Firebase / Google Login =========
+  function initFirebase(){
+    // Esperar a que Firebase esté disponible
+    if (typeof firebase === 'undefined') {
+      console.warn("Firebase SDK aún no está cargado, reintentando...");
+      setTimeout(initFirebase, 100);
+      return;
+    }
+
+    const firebaseConfig = {
+      apiKey: "AIzaSyDAfFywakwJfbMq9TesUXjd1x3WEGHia-Y",
+      authDomain: "ilfornodialessandro.firebaseapp.com",
+      projectId: "ilfornodialessandro",
+      storageBucket: "ilfornodialessandro.firebasestorage.app",
+      messagingSenderId: "292923743751",
+      appId: "1:292923743751:web:7837ce91edb2e4665d94a2",
+      measurementId: "G-HCGRKDY2FZ"
+    };
+
+    try{
+      // Verificar si ya está inicializado
+      if (firebase.apps && firebase.apps.length > 0) {
+        console.log("Firebase ya está inicializado");
+      } else {
+        firebase.initializeApp(firebaseConfig);
+        console.log("✅ Firebase inicializado correctamente");
+      }
+      
+      btnGoogle.disabled = false;
+      btnGoogle.classList.add("enabled");
+      btnGoogle.textContent = "🔐 Iniciar sesión con Google";
+      console.log("✅ Botón de Google habilitado");
+    } catch(e){
+      console.error("❌ Error inicializando Firebase:", e);
+      btnGoogle.textContent = "❌ Error cargando Google";
+    }
+  }
+
+  async function doGoogleLogin(){
+    try{
+      const auth = firebase.auth();
+      const provider = new firebase.auth.GoogleAuthProvider();
+
+      btnGoogle.disabled = true;
+      btnGoogle.textContent = "Conectando con Google...";
+
+      const result = await auth.signInWithPopup(provider);
+      const user = result.user;
+      if (!user){
+        alert("No se pudo completar el login con Google.");
+        return;
+      }
+
+      const idToken = await user.getIdToken();
+
+      const r = await fetch("/api/login/google", {
+        method:"POST",
+        headers:{ "Content-Type":"application/json" },
+        credentials:"include",
+        body: JSON.stringify({ idToken })
+      });
+      const d = await r.json().catch(()=>({}));
+
+      if (!r.ok){
+        alert(d.error || "Error iniciando sesión con Google.");
+        return;
+      }
+
+      window.location.replace("/index.html");
+    } catch(e){
+      console.error("Google login error:", e);
+      alert("No se pudo completar el login con Google.");
+    } finally {
+      btnGoogle.disabled = false;
+      btnGoogle.textContent = "🔐 Iniciar sesión con Google";
+    }
+  }
+
+  btnGoogle.addEventListener("click", () => {
+    if (btnGoogle.disabled) return;
+    doGoogleLogin();
+  });
+
+  // Inicializar Firebase cuando la página esté completamente cargada
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initFirebase);
+  } else {
+    setTimeout(initFirebase, 100);
+  }
+</script>
 </body>
 </html>

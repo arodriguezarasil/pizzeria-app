@@ -5,34 +5,81 @@ import cors from "cors";
 import cookieParser from "cookie-parser";
 import bcrypt from "bcryptjs";
 import crypto from "crypto";
+import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 
-import { db, initDb } from "./db.js";
+import { initDb, pool, queryOne, queryAll } from "./db.js";
 import {
   ensureAdminFromEnv,
   createSession,
   verifySessionCookie,
   destroySession,
 } from "./auth.js";
+import admin from "firebase-admin";
 import { sendApprovalEmail, sendPasswordResetEmail } from "./mail.js";
 
 const app = express();
 
 const PORT = Number(process.env.PORT || 3000);
 const SESSION_SECRET = process.env.SESSION_SECRET || "dev-secret";
-const APP_ORIGIN = process.env.APP_ORIGIN || `http://localhost:${PORT}`;
+const APP_ORIGINS = String(process.env.APP_ORIGIN || `http://localhost:${PORT}`)
+  .split(",")
+  .map((s) => s.trim())
+  .filter(Boolean);
+const APP_ORIGIN = APP_ORIGINS[0] || `http://localhost:${PORT}`;
+
+// Para emails, usar la URL pública (HTTPS/zrok) si está disponible
+const PUBLIC_APP_ORIGIN = APP_ORIGINS.find((url) => url.startsWith("https://")) ||
+  APP_ORIGINS.find((url) => url.includes("zrok.io")) ||
+  APP_ORIGIN;
+
+// =====================
+// Google / Firebase
+// =====================
+const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || "";
+const FIREBASE_PROJECT_ID = "ilfornodialessandro"; // De tu firebaseConfig
+
+// Inicializar Firebase Admin SDK (sin credenciales de servicio, solo para verificar tokens)
+let firebaseAdminInitialized = false;
+if (GOOGLE_CLIENT_ID) {
+  try {
+    admin.initializeApp({
+      projectId: FIREBASE_PROJECT_ID,
+      // No necesitamos credenciales de servicio para solo verificar tokens
+    });
+    firebaseAdminInitialized = true;
+    console.log("✅ Firebase Admin SDK inicializado");
+  } catch (e) {
+    console.warn("⚠️ Firebase Admin ya estaba inicializado o error:", e.message);
+    firebaseAdminInitialized = true; // Probablemente ya estaba inicializado
+  }
+}
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const PUBLIC_DIR = path.join(__dirname, "..", "..", "public");
+const PUBLIC_DIR_CANDIDATES = [
+  path.join(__dirname, "..", "..", "public"), // repo root when running from server/
+  path.join(__dirname, "..", "public"), // docker layout (/app/src + /app/public)
+  path.join(process.cwd(), "public"),
+];
+const PUBLIC_DIR = PUBLIC_DIR_CANDIDATES.find((dir) => fs.existsSync(dir)) || PUBLIC_DIR_CANDIDATES[0];
 
 // =====================
 // Middlewares base
 // =====================
 app.use(express.json({ limit: "1mb" }));
 app.use(cookieParser());
-app.use(cors({ origin: APP_ORIGIN, credentials: true }));
+app.use(
+  cors({
+    origin(origin, callback) {
+      if (!origin) return callback(null, true);
+      if (APP_ORIGINS.includes(origin)) return callback(null, true);
+      return callback(new Error("Not allowed by CORS"));
+    },
+    credentials: true,
+  })
+);
 
 // =====================
 // Anti-cache en páginas protegidas
@@ -58,10 +105,13 @@ app.get("/reset-password.html", noStore, (_req, res) => res.sendFile(path.join(P
 // Frontend estático
 app.use(express.static(PUBLIC_DIR));
 
+// Root explícito por si el servidor no resuelve index.html
+app.get("/", (_req, res) => res.sendFile(path.join(PUBLIC_DIR, "index.html")));
+
 // =====================
 // Cargar usuario desde cookie -> sesión -> user real
 // =====================
-app.use((req, _res, next) => {
+app.use(async (req, _res, next) => {
   try {
     const cookieVal = req.cookies?.session;
     const sess = verifySessionCookie(cookieVal, SESSION_SECRET);
@@ -73,22 +123,28 @@ app.use((req, _res, next) => {
     const sessionId = sess.sessionId;
     const nowIso = new Date().toISOString();
 
-    const srow = db.prepare(`
-      SELECT id, user_id, expires_at
-      FROM sessions
-      WHERE id = ? AND expires_at > ?
-    `).get(sessionId, nowIso);
+    const srow = await queryOne(
+      `
+        SELECT id, user_id, expires_at
+        FROM sessions
+        WHERE id = $1 AND expires_at > $2
+      `,
+      [sessionId, nowIso]
+    );
 
     if (!srow) {
       req.user = null;
       return next();
     }
 
-    const urow = db.prepare(`
-      SELECT id, username, email, role, status
-      FROM users
-      WHERE id = ?
-    `).get(srow.user_id);
+    const urow = await queryOne(
+      `
+        SELECT id, username, email, role, status
+        FROM users
+        WHERE id = $1
+      `,
+      [srow.user_id]
+    );
 
     // Solo usuarios aprobados
     if (!urow || urow.status !== "APPROVED") {
@@ -148,9 +204,10 @@ app.post("/api/register", async (req, res) => {
     if (!normEmail.includes("@")) return res.status(400).json({ error: "Email inválido" });
     if (String(password).length < 6) return res.status(400).json({ error: "Contraseña demasiado corta" });
 
-    const exists = db
-      .prepare("SELECT id, status FROM users WHERE username = ? OR email = ?")
-      .get(normUser, normEmail);
+    const exists = await queryOne(
+      "SELECT id, status FROM users WHERE username = $1 OR email = $2",
+      [normUser, normEmail]
+    );
 
     if (exists) {
       return res.status(409).json({
@@ -162,39 +219,58 @@ app.post("/api/register", async (req, res) => {
     const hash = bcrypt.hashSync(String(password), 12);
     const createdAt = new Date().toISOString();
 
-    const info = db.prepare(`
-      INSERT INTO users (username, email, password_hash, role, status, created_at)
-      VALUES (?, ?, ?, 'USER', 'PENDING', ?)
-    `).run(normUser, normEmail, hash, createdAt);
+    // Usar el menor ID disponible (rellenar huecos) en lugar de depender del SERIAL.
+    // Nota: esto NO es el comportamiento típico de Postgres; se hace porque lo pides explícitamente.
+    const info = await pool.query(
+      `
+        WITH next_id AS (
+          SELECT COALESCE(
+            (
+              SELECT MIN(gs)
+              FROM generate_series(
+                1,
+                (SELECT COALESCE(MAX(id), 0) + 1 FROM users)
+              ) AS gs
+              WHERE NOT EXISTS (SELECT 1 FROM users u WHERE u.id = gs)
+            ),
+            1
+          ) AS id
+        )
+        INSERT INTO users (id, username, email, password_hash, role, status, created_at)
+        SELECT id, $1, $2, $3, 'USER', 'PENDING', $4
+        FROM next_id
+        RETURNING id
+      `,
+      [normUser, normEmail, hash, createdAt]
+    );
 
-    const userId = info.lastInsertRowid;
+    const userId = info.rows[0]?.id;
 
     const approveToken = crypto.randomBytes(24).toString("hex");
     const rejectToken = crypto.randomBytes(24).toString("hex");
     const expiresAt = new Date(Date.now() + 1000 * 60 * 60 * 24 * 3).toISOString();
 
-    db.prepare(`
-      INSERT INTO approval_tokens (token, user_id, action, expires_at, created_at)
-      VALUES (?, ?, 'APPROVE', ?, ?),
-             (?, ?, 'REJECT',  ?, ?)
-    `).run(
-      approveToken, userId, expiresAt, createdAt,
-      rejectToken, userId, expiresAt, createdAt
+    await pool.query(
+      `
+        INSERT INTO approval_tokens (token, user_id, action, expires_at, created_at)
+        VALUES ($1, $2, 'APPROVE', $3, $4),
+               ($5, $6, 'REJECT',  $7, $8)
+      `,
+      [approveToken, userId, expiresAt, createdAt, rejectToken, userId, expiresAt, createdAt]
     );
 
-    const approveUrl = `${APP_ORIGIN}/api/approve?token=${approveToken}`;
-    const rejectUrl = `${APP_ORIGIN}/api/reject?token=${rejectToken}`;
+    const approveUrl = `${PUBLIC_APP_ORIGIN}/api/approve?token=${approveToken}`;
+    const rejectUrl = `${PUBLIC_APP_ORIGIN}/api/reject?token=${rejectToken}`;
 
-    try {
-      await sendApprovalEmail({
-        toAdminEmail: process.env.ADMIN_EMAIL,
-        username: normUser,
-        email: normEmail,
-        approveUrl,
-        rejectUrl,
-      });
-    } catch (e) {
-      console.error("Email error:", e);
+    const emailResult = await sendApprovalEmail({
+      toAdminEmail: process.env.ADMIN_EMAIL,
+      username: normUser,
+      email: normEmail,
+      approveUrl,
+      rejectUrl,
+    });
+
+    if (!emailResult || !emailResult.success) {
       return res.status(201).json({
         ok: true,
         message: "Solicitud creada, pero falló el email. Revisa SMTP.",
@@ -217,22 +293,23 @@ app.post("/api/register", async (req, res) => {
 app.get("/api/approve", (req, res) => handleDecision(req, res, "APPROVE"));
 app.get("/api/reject", (req, res) => handleDecision(req, res, "REJECT"));
 
-function handleDecision(req, res, action) {
+async function handleDecision(req, res, action) {
   try {
     const token = String(req.query?.token || "");
     if (!token) return res.status(400).send("Falta token");
 
-    const row = db.prepare(
-      "SELECT token, user_id, action, expires_at FROM approval_tokens WHERE token = ?"
-    ).get(token);
+    const row = await queryOne(
+      "SELECT token, user_id, action, expires_at FROM approval_tokens WHERE token = $1",
+      [token]
+    );
 
     if (!row) return res.status(400).send("Token inválido");
     if (row.action !== action) return res.status(400).send("Acción no coincide");
     if (new Date(row.expires_at).getTime() < Date.now()) return res.status(400).send("Token caducado");
 
     const newStatus = action === "APPROVE" ? "APPROVED" : "REJECTED";
-    db.prepare("UPDATE users SET status = ? WHERE id = ?").run(newStatus, row.user_id);
-    db.prepare("DELETE FROM approval_tokens WHERE user_id = ?").run(row.user_id);
+    await pool.query("UPDATE users SET status = $1 WHERE id = $2", [newStatus, row.user_id]);
+    await pool.query("DELETE FROM approval_tokens WHERE user_id = $1", [row.user_id]);
 
     return res.send(`
       <html><body style="font-family:Arial;padding:20px">
@@ -249,17 +326,20 @@ function handleDecision(req, res, action) {
 // =====================
 // Login
 // =====================
-app.post("/api/login", (req, res) => {
+app.post("/api/login", async (req, res) => {
   try {
     const { usernameOrEmail, password } = req.body || {};
     if (!usernameOrEmail || !password) return res.status(400).json({ error: "Faltan campos" });
 
     const key = String(usernameOrEmail).trim().toLowerCase();
-    const user = db.prepare(`
-      SELECT id, username, email, password_hash, role, status
-      FROM users
-      WHERE username = ? OR email = ?
-    `).get(key, key);
+    const user = await queryOne(
+      `
+        SELECT id, username, email, password_hash, role, status
+        FROM users
+        WHERE username = $1 OR email = $2
+      `,
+      [key, key]
+    );
 
     if (!user) return res.status(401).json({ error: "Credenciales incorrectas" });
     if (user.status !== "APPROVED") return res.status(403).json({ error: "Tu cuenta aún no está aprobada" });
@@ -267,7 +347,7 @@ app.post("/api/login", (req, res) => {
     const ok = bcrypt.compareSync(String(password), user.password_hash);
     if (!ok) return res.status(401).json({ error: "Credenciales incorrectas" });
 
-    const cookieVal = createSession(user.id, SESSION_SECRET);
+    const cookieVal = await createSession(user.id, SESSION_SECRET);
     res.cookie("session", cookieVal, {
       httpOnly: true,
       sameSite: "lax",
@@ -286,6 +366,138 @@ app.post("/api/login", (req, res) => {
 });
 
 // =====================
+// Login con Google (Firebase)
+// =====================
+app.post("/api/login/google", async (req, res) => {
+  try {
+    if (!firebaseAdminInitialized || !GOOGLE_CLIENT_ID) {
+      return res.status(500).json({ error: "Login con Google no está configurado en el servidor." });
+    }
+
+    const { idToken } = req.body || {};
+    if (!idToken) {
+      return res.status(400).json({ error: "Falta idToken" });
+    }
+
+    // Verificar ID token usando Firebase Admin SDK (más robusto para tokens de Firebase)
+    let decodedToken;
+    try {
+      decodedToken = await admin.auth().verifyIdToken(idToken);
+    } catch (err) {
+      console.error("LOGIN GOOGLE ERROR:", err);
+      return res.status(401).json({ 
+        error: "Token de Google inválido o expirado. Intenta iniciar sesión de nuevo." 
+      });
+    }
+    
+    const payload = decodedToken;
+
+    if (!payload) {
+      return res.status(401).json({ error: "Token de Google inválido" });
+    }
+
+    const email = String(payload.email || "").toLowerCase();
+    const emailVerified = !!payload.email_verified;
+    const name = payload.name || email.split("@")[0] || "usuario";
+
+    if (!email || !emailVerified) {
+      return res.status(401).json({ error: "Tu correo de Google no está verificado." });
+    }
+
+    // Buscar usuario por email
+    let user = await queryOne(
+      `
+        SELECT id, username, email, role, status
+        FROM users
+        WHERE email = $1
+      `,
+      [email]
+    );
+
+    // Si no existe, lo creamos como USER APPROVED (sin password)
+    if (!user) {
+      // Generar username único a partir de name/email
+      const baseUsername = String(name || email.split("@")[0] || "user")
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-+|-+$/g, "") || "user";
+
+      let candidate = baseUsername;
+      let suffix = 1;
+      // Buscar username libre
+      // (en este caso, como los IDs los controlamos nosotros, no pasa nada por hacer algunos intentos)
+      // Limitamos a unos cuantos intentos por seguridad.
+      /* eslint-disable no-await-in-loop */
+      while (suffix < 50) {
+        const exists = await queryOne(
+          "SELECT id FROM users WHERE username = $1",
+          [candidate]
+        );
+        if (!exists) break;
+        candidate = `${baseUsername}${suffix}`;
+        suffix += 1;
+      }
+
+      const createdAt = new Date().toISOString();
+      const insert = await pool.query(
+        `
+          WITH next_id AS (
+            SELECT COALESCE(
+              (
+                SELECT MIN(gs)
+                FROM generate_series(
+                  1,
+                  (SELECT COALESCE(MAX(id), 0) + 1 FROM users)
+                ) AS gs
+                WHERE NOT EXISTS (SELECT 1 FROM users u WHERE u.id = gs)
+              ),
+              1
+            ) AS id
+          )
+          INSERT INTO users (id, username, email, password_hash, role, status, created_at)
+          SELECT id, $1, $2, '', 'USER', 'APPROVED', $3
+          FROM next_id
+          RETURNING id, username, email, role, status
+        `,
+        [candidate, email, createdAt]
+      );
+
+      user = insert.rows[0];
+    }
+
+    if (!user) {
+      return res.status(500).json({ error: "No se pudo crear usuario con Google." });
+    }
+
+    if (user.status !== "APPROVED") {
+      return res.status(403).json({ error: "Tu cuenta aún no está aprobada" });
+    }
+
+    const cookieVal = await createSession(user.id, SESSION_SECRET);
+    res.cookie("session", cookieVal, {
+      httpOnly: true,
+      sameSite: "lax",
+      secure: false,
+      maxAge: 1000 * 60 * 60 * 24 * 7,
+    });
+
+    return res.json({
+      ok: true,
+      user: {
+        id: user.id,
+        username: user.username,
+        email: user.email,
+        role: user.role,
+      },
+    });
+  } catch (e) {
+    console.error("LOGIN GOOGLE ERROR:", e);
+    return res.status(500).json({ error: "Error interno en login con Google" });
+  }
+});
+
+// =====================
 // Password reset (forgot + check + reset)
 // =====================
 app.post("/api/password/forgot", async (req, res) => {
@@ -296,11 +508,14 @@ app.post("/api/password/forgot", async (req, res) => {
       return res.status(400).json({ error: "Email inválido" });
     }
 
-    const user = db.prepare(`
-      SELECT id, email
-      FROM users
-      WHERE email = ?
-    `).get(normEmail);
+    const user = await queryOne(
+      `
+        SELECT id, email
+        FROM users
+        WHERE email = $1
+      `,
+      [normEmail]
+    );
 
     if (!user) {
       return res.status(404).json({
@@ -308,48 +523,53 @@ app.post("/api/password/forgot", async (req, res) => {
       });
     }
 
-    db.prepare(`DELETE FROM password_reset_tokens WHERE user_id = ?`).run(user.id);
+    await pool.query(`DELETE FROM password_reset_tokens WHERE user_id = $1`, [user.id]);
 
     const token = crypto.randomBytes(24).toString("hex");
     const createdAt = new Date().toISOString();
     const expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
 
-    db.prepare(`
-      INSERT INTO password_reset_tokens (token, user_id, expires_at, created_at)
-      VALUES (?, ?, ?, ?)
-    `).run(token, user.id, expiresAt, createdAt);
+    await pool.query(
+      `
+        INSERT INTO password_reset_tokens (token, user_id, expires_at, created_at)
+        VALUES ($1, $2, $3, $4)
+      `,
+      [token, user.id, expiresAt, createdAt]
+    );
 
-    const resetUrl = `${APP_ORIGIN}/reset-password.html?token=${encodeURIComponent(token)}`;
+    const resetUrl = `${PUBLIC_APP_ORIGIN}/reset-password.html?token=${encodeURIComponent(token)}`;
 
-    try {
-      await sendPasswordResetEmail({ to: normEmail, resetUrl });
-      return res.json({ ok: true, message: "Te hemos enviado un enlace para restablecer la contraseña." });
-    } catch (e) {
-      console.error("RESET EMAIL ERROR:", e);
+    const emailResult = await sendPasswordResetEmail({ to: normEmail, resetUrl });
+    if (!emailResult || !emailResult.success) {
       return res.status(500).json({ error: "No se pudo enviar el email. Revisa SMTP." });
     }
+
+    return res.json({ ok: true, message: "Te hemos enviado un enlace para restablecer la contraseña." });
   } catch (e) {
     console.error("FORGOT ERROR:", e);
     return res.status(500).json({ error: "Error interno" });
   }
 });
 
-app.get("/api/password/reset/check", (req, res) => {
+app.get("/api/password/reset/check", async (req, res) => {
   try {
     const token = String(req.query?.token || "").trim();
     if (!token) return res.status(400).json({ error: "Falta token" });
 
-    const row = db.prepare(`
-      SELECT prt.token, prt.user_id, prt.expires_at, u.email
-      FROM password_reset_tokens prt
-      JOIN users u ON u.id = prt.user_id
-      WHERE prt.token = ?
-    `).get(token);
+    const row = await queryOne(
+      `
+        SELECT prt.token, prt.user_id, prt.expires_at, u.email
+        FROM password_reset_tokens prt
+        JOIN users u ON u.id = prt.user_id
+        WHERE prt.token = $1
+      `,
+      [token]
+    );
 
     if (!row) return res.status(400).json({ error: "Enlace inválido" });
 
     if (new Date(row.expires_at).getTime() < Date.now()) {
-      db.prepare(`DELETE FROM password_reset_tokens WHERE token = ?`).run(token);
+      await pool.query(`DELETE FROM password_reset_tokens WHERE token = $1`, [token]);
       return res.status(400).json({ error: "Enlace caducado" });
     }
 
@@ -360,7 +580,7 @@ app.get("/api/password/reset/check", (req, res) => {
   }
 });
 
-app.post("/api/password/reset", (req, res) => {
+app.post("/api/password/reset", async (req, res) => {
   try {
     const { token, username, password, confirmPassword } = req.body || {};
 
@@ -372,35 +592,44 @@ app.post("/api/password/reset", (req, res) => {
     if (!password || String(password).length < 6) return res.status(400).json({ error: "Contraseña demasiado corta" });
     if (String(password) !== String(confirmPassword)) return res.status(400).json({ error: "Las contraseñas no coinciden" });
 
-    const row = db.prepare(`
-      SELECT token, user_id, expires_at
-      FROM password_reset_tokens
-      WHERE token = ?
-    `).get(t);
+    const row = await queryOne(
+      `
+        SELECT token, user_id, expires_at
+        FROM password_reset_tokens
+        WHERE token = $1
+      `,
+      [t]
+    );
 
     if (!row) return res.status(400).json({ error: "Token inválido" });
 
     if (new Date(row.expires_at).getTime() < Date.now()) {
-      db.prepare(`DELETE FROM password_reset_tokens WHERE token = ?`).run(t);
+      await pool.query(`DELETE FROM password_reset_tokens WHERE token = $1`, [t]);
       return res.status(400).json({ error: "Token caducado" });
     }
 
-    const taken = db.prepare(`
-      SELECT id FROM users WHERE username = ? AND id <> ?
-    `).get(normUser, row.user_id);
+    const taken = await queryOne(
+      `
+        SELECT id FROM users WHERE username = $1 AND id <> $2
+      `,
+      [normUser, row.user_id]
+    );
 
     if (taken) return res.status(409).json({ error: "Ese nombre de usuario ya está en uso" });
 
     const hash = bcrypt.hashSync(String(password), 12);
 
-    db.prepare(`
-      UPDATE users
-      SET username = ?, password_hash = ?
-      WHERE id = ?
-    `).run(normUser, hash, row.user_id);
+    await pool.query(
+      `
+        UPDATE users
+        SET username = $1, password_hash = $2
+        WHERE id = $3
+      `,
+      [normUser, hash, row.user_id]
+    );
 
-    db.prepare(`DELETE FROM sessions WHERE user_id = ?`).run(row.user_id);
-    db.prepare(`DELETE FROM password_reset_tokens WHERE user_id = ?`).run(row.user_id);
+    await pool.query(`DELETE FROM sessions WHERE user_id = $1`, [row.user_id]);
+    await pool.query(`DELETE FROM password_reset_tokens WHERE user_id = $1`, [row.user_id]);
 
     return res.json({ ok: true, message: "Contraseña actualizada. Inicia sesión de nuevo." });
   } catch (e) {
@@ -412,12 +641,12 @@ app.post("/api/password/reset", (req, res) => {
 // =====================
 // Logout
 // =====================
-app.post("/api/logout", (req, res) => {
+app.post("/api/logout", async (req, res) => {
   try {
     const cookieVal = req.cookies?.session;
     const sess = verifySessionCookie(cookieVal, SESSION_SECRET);
     const sessionId = sess?.sessionId;
-    if (sessionId) destroySession(sessionId);
+    if (sessionId) await destroySession(sessionId);
   } catch {}
   res.clearCookie("session");
   return res.json({ ok: true });
@@ -435,17 +664,20 @@ app.get("/api/me", (req, res) => {
 // My orders (historial usuario)
 // - Si admin_deleted_at != NULL: usuario ve user_final_status (READY o CANCELLED)
 // =====================
-app.get("/api/my/orders", requireAuth, (req, res) => {
+app.get("/api/my/orders", requireAuth, async (req, res) => {
   try {
     const userId = req.user.id;
 
-    const rows = db.prepare(`
-      SELECT id, status, created_at, order_json, admin_deleted_at, user_final_status
-      FROM orders
-      WHERE user_id = ?
-      ORDER BY created_at DESC
-      LIMIT 50
-    `).all(userId);
+    const rows = await queryAll(
+      `
+        SELECT id, status, created_at, order_json, admin_deleted_at, user_final_status
+        FROM orders
+        WHERE user_id = $1
+        ORDER BY created_at DESC
+        LIMIT 50
+      `,
+      [userId]
+    );
 
     const orders = rows.map((r) => {
       let parsed = {};
@@ -468,7 +700,7 @@ app.get("/api/my/orders", requireAuth, (req, res) => {
 // =====================
 // Orders (max 3 pizzas + 10 min cooldown excepto ADMIN)
 // =====================
-app.post("/api/orders", requireAuth, (req, res) => {
+app.post("/api/orders", requireAuth, async (req, res) => {
   try {
     const userId = req.user.id;
     const role = String(req.user.role || "USER").toUpperCase();
@@ -490,13 +722,16 @@ app.post("/api/orders", requireAuth, (req, res) => {
     const cooldownMs = 10 * 60 * 1000;
 
     if (role !== "ADMIN") {
-      const last = db.prepare(`
-        SELECT created_at
-        FROM orders
-        WHERE user_id = ?
-        ORDER BY created_at DESC
-        LIMIT 1
-      `).get(userId);
+      const last = await queryOne(
+        `
+          SELECT created_at
+          FROM orders
+          WHERE user_id = $1
+          ORDER BY created_at DESC
+          LIMIT 1
+        `,
+        [userId]
+      );
 
       if (last?.created_at) {
         const lastMs = new Date(last.created_at).getTime();
@@ -520,14 +755,18 @@ app.post("/api/orders", requireAuth, (req, res) => {
       createdAt,
     });
 
-    const info = db.prepare(`
-      INSERT INTO orders (user_id, order_json, status, created_at)
-      VALUES (?, ?, 'RECEIVED', ?)
-    `).run(userId, orderJson, createdAt);
+    const info = await pool.query(
+      `
+        INSERT INTO orders (user_id, order_json, status, created_at)
+        VALUES ($1, $2, 'RECEIVED', $3)
+        RETURNING id
+      `,
+      [userId, orderJson, createdAt]
+    );
 
     return res.status(201).json({
       ok: true,
-      id: info.lastInsertRowid,
+      id: info.rows[0]?.id,
       cooldownSec: role === "ADMIN" ? 0 : 600,
     });
   } catch (e) {
@@ -539,33 +778,35 @@ app.post("/api/orders", requireAuth, (req, res) => {
 // =====================
 // Admin users (+ orders_count)
 // =====================
-app.get("/api/admin/users", requireAdmin, (_req, res) => {
-  const rows = db.prepare(`
-    SELECT
-      u.id, u.username, u.email, u.role, u.status, u.created_at,
-      COUNT(o.id) AS orders_count
-    FROM users u
-    LEFT JOIN orders o ON o.user_id = u.id
-    GROUP BY u.id
-    ORDER BY u.created_at DESC
-  `).all();
+app.get("/api/admin/users", requireAdmin, async (_req, res) => {
+  const rows = await queryAll(
+    `
+      SELECT
+        u.id, u.username, u.email, u.role, u.status, u.created_at,
+        COUNT(o.id) AS orders_count
+      FROM users u
+      LEFT JOIN orders o ON o.user_id = u.id
+      GROUP BY u.id
+      ORDER BY u.created_at DESC
+    `
+  );
 
   res.json({ ok: true, users: rows });
 });
 
-app.delete("/api/admin/users/:id", requireAdmin, (req, res) => {
+app.delete("/api/admin/users/:id", requireAdmin, async (req, res) => {
   const id = Number(req.params.id);
   if (!Number.isFinite(id)) return res.status(400).json({ error: "ID inválido" });
 
-  const u = db.prepare("SELECT id, role FROM users WHERE id = ?").get(id);
+  const u = await queryOne("SELECT id, role FROM users WHERE id = $1", [id]);
   if (!u) return res.status(404).json({ error: "Usuario no existe" });
   if (String(u.role).toUpperCase() === "ADMIN") return res.status(403).json({ error: "No puedes borrar un ADMIN" });
 
-  db.prepare("DELETE FROM sessions WHERE user_id = ?").run(id);
-  db.prepare("DELETE FROM approval_tokens WHERE user_id = ?").run(id);
-  db.prepare("DELETE FROM password_reset_tokens WHERE user_id = ?").run(id);
-  db.prepare("DELETE FROM orders WHERE user_id = ?").run(id);
-  db.prepare("DELETE FROM users WHERE id = ?").run(id);
+  await pool.query("DELETE FROM sessions WHERE user_id = $1", [id]);
+  await pool.query("DELETE FROM approval_tokens WHERE user_id = $1", [id]);
+  await pool.query("DELETE FROM password_reset_tokens WHERE user_id = $1", [id]);
+  await pool.query("DELETE FROM orders WHERE user_id = $1", [id]);
+  await pool.query("DELETE FROM users WHERE id = $1", [id]);
 
   res.json({ ok: true });
 });
@@ -574,26 +815,28 @@ app.delete("/api/admin/users/:id", requireAdmin, (req, res) => {
 // Admin orders (lista)
 // - NO muestra pedidos eliminados por admin (admin_deleted_at IS NULL)
 // =====================
-app.get("/api/admin/orders", requireAdmin, (_req, res) => {
+app.get("/api/admin/orders", requireAdmin, async (_req, res) => {
   try {
-    const rows = db.prepare(`
-      SELECT
-        o.id,
-        o.status,
-        o.created_at,
-        o.preparing_at,
-        o.ready_at,
-        o.admin_deleted_at,
-        o.user_final_status,
-        o.order_json,
-        u.username AS u_username,
-        u.email AS u_email
-      FROM orders o
-      JOIN users u ON u.id = o.user_id
-      WHERE o.admin_deleted_at IS NULL
-      ORDER BY o.created_at DESC
-      LIMIT 200
-    `).all();
+    const rows = await queryAll(
+      `
+        SELECT
+          o.id,
+          o.status,
+          o.created_at,
+          o.preparing_at,
+          o.ready_at,
+          o.admin_deleted_at,
+          o.user_final_status,
+          o.order_json,
+          u.username AS u_username,
+          u.email AS u_email
+        FROM orders o
+        JOIN users u ON u.id = o.user_id
+        WHERE o.admin_deleted_at IS NULL
+        ORDER BY o.created_at DESC
+        LIMIT 200
+      `
+    );
 
     const orders = rows.map((r) => {
       let parsed = {};
@@ -623,36 +866,45 @@ app.get("/api/admin/orders", requireAdmin, (_req, res) => {
 // =====================
 // Admin: tap en tarjeta (toggle RECIBIDO ⇄ EN PREPARACIÓN)
 // =====================
-app.patch("/api/admin/orders/:id/prepare", requireAdmin, (req, res) => {
+app.patch("/api/admin/orders/:id/prepare", requireAdmin, async (req, res) => {
   try {
     const id = Number(req.params.id);
     if (!Number.isFinite(id)) return res.status(400).json({ error: "ID inválido" });
 
-    const row = db.prepare(`
-      SELECT id, status
-      FROM orders
-      WHERE id=? AND admin_deleted_at IS NULL
-    `).get(id);
+    const row = await queryOne(
+      `
+        SELECT id, status
+        FROM orders
+        WHERE id = $1 AND admin_deleted_at IS NULL
+      `,
+      [id]
+    );
 
     if (!row) return res.status(404).json({ error: "Pedido no existe" });
 
     const st = String(row.status || "RECEIVED").toUpperCase();
 
     if (st === "RECEIVED") {
-      db.prepare(`
-        UPDATE orders
-        SET status='PREPARING', preparing_at=datetime('now')
-        WHERE id=?
-      `).run(id);
+      await pool.query(
+        `
+          UPDATE orders
+          SET status='PREPARING', preparing_at=NOW()
+          WHERE id=$1
+        `,
+        [id]
+      );
       return res.json({ ok: true, status: "PREPARING" });
     }
 
     if (st === "PREPARING") {
-      db.prepare(`
-        UPDATE orders
-        SET status='RECEIVED', preparing_at=NULL
-        WHERE id=?
-      `).run(id);
+      await pool.query(
+        `
+          UPDATE orders
+          SET status='RECEIVED', preparing_at=NULL
+          WHERE id=$1
+        `,
+        [id]
+      );
       return res.json({ ok: true, status: "RECEIVED" });
     }
 
@@ -672,16 +924,19 @@ app.patch("/api/admin/orders/:id/prepare", requireAdmin, (req, res) => {
 // - READY -> PREPARING (quita ready_at)
 // - RECEIVED -> PREPARING (más coherente que saltar a READY)
 // =====================
-app.patch("/api/admin/orders/:id/toggle", requireAdmin, (req, res) => {
+app.patch("/api/admin/orders/:id/toggle", requireAdmin, async (req, res) => {
   try {
     const id = Number(req.params.id);
     if (!Number.isFinite(id)) return res.status(400).json({ error: "ID inválido" });
 
-    const row = db.prepare(`
-      SELECT id, status
-      FROM orders
-      WHERE id=? AND admin_deleted_at IS NULL
-    `).get(id);
+    const row = await queryOne(
+      `
+        SELECT id, status
+        FROM orders
+        WHERE id=$1 AND admin_deleted_at IS NULL
+      `,
+      [id]
+    );
 
     if (!row) return res.status(404).json({ error: "Pedido no existe" });
 
@@ -689,17 +944,23 @@ app.patch("/api/admin/orders/:id/toggle", requireAdmin, (req, res) => {
     const nowIso = new Date().toISOString();
 
     if (st === "READY") {
-      db.prepare(`UPDATE orders SET status='PREPARING', ready_at=NULL WHERE id=?`).run(id);
+      await pool.query(`UPDATE orders SET status='PREPARING', ready_at=NULL WHERE id=$1`, [id]);
       return res.json({ ok: true, status: "PREPARING" });
     }
 
     if (st === "RECEIVED") {
-      db.prepare(`UPDATE orders SET status='PREPARING', preparing_at=? WHERE id=?`).run(nowIso, id);
+      await pool.query(
+        `UPDATE orders SET status='PREPARING', preparing_at=$1 WHERE id=$2`,
+        [nowIso, id]
+      );
       return res.json({ ok: true, status: "PREPARING" });
     }
 
     // PREPARING -> READY
-    db.prepare(`UPDATE orders SET status='READY', ready_at=? WHERE id=?`).run(nowIso, id);
+    await pool.query(
+      `UPDATE orders SET status='READY', ready_at=$1 WHERE id=$2`,
+      [nowIso, id]
+    );
     return res.json({ ok: true, status: "READY" });
   } catch (e) {
     console.error("TOGGLE ERROR:", e);
@@ -708,17 +969,20 @@ app.patch("/api/admin/orders/:id/toggle", requireAdmin, (req, res) => {
 });
 
 // Compat antigua /done -> READY
-app.patch("/api/admin/orders/:id/done", requireAdmin, (req, res) => {
+app.patch("/api/admin/orders/:id/done", requireAdmin, async (req, res) => {
   try {
     const id = Number(req.params.id);
     if (!Number.isFinite(id)) return res.status(400).json({ error: "ID inválido" });
 
     const nowIso = new Date().toISOString();
-    db.prepare(`
-      UPDATE orders
-      SET status='READY', ready_at=?
-      WHERE id=? AND admin_deleted_at IS NULL
-    `).run(nowIso, id);
+    await pool.query(
+      `
+        UPDATE orders
+        SET status='READY', ready_at=$1
+        WHERE id=$2 AND admin_deleted_at IS NULL
+      `,
+      [nowIso, id]
+    );
 
     res.json({ ok: true, status: "READY", ready_at: nowIso });
   } catch (e) {
@@ -738,16 +1002,19 @@ app.patch("/api/admin/orders/:id/done", requireAdmin, (req, res) => {
 // - Si estaba READY: el cliente seguirá viéndolo READY
 // - Si estaba RECEIVED/PREPARING: el cliente lo verá CANCELLED
 // =====================
-app.delete("/api/admin/orders/:id", requireAdmin, (req, res) => {
+app.delete("/api/admin/orders/:id", requireAdmin, async (req, res) => {
   try {
     const id = Number(req.params.id);
     if (!Number.isFinite(id)) return res.status(400).json({ error: "ID inválido" });
 
-    const row = db.prepare(`
-      SELECT id, status
-      FROM orders
-      WHERE id=? AND admin_deleted_at IS NULL
-    `).get(id);
+    const row = await queryOne(
+      `
+        SELECT id, status
+        FROM orders
+        WHERE id=$1 AND admin_deleted_at IS NULL
+      `,
+      [id]
+    );
 
     if (!row) return res.status(404).json({ error: "Pedido no existe" });
 
@@ -757,13 +1024,16 @@ app.delete("/api/admin/orders/:id", requireAdmin, (req, res) => {
     // opcional: si no estaba READY, dejamos también status='CANCELLED' para coherencia
     const newStatus = (st === "READY") ? "READY" : "CANCELLED";
 
-    db.prepare(`
-      UPDATE orders
-      SET admin_deleted_at=datetime('now'),
-          user_final_status=?,
-          status=?
-      WHERE id=?
-    `).run(userFinal, newStatus, id);
+    await pool.query(
+      `
+        UPDATE orders
+        SET admin_deleted_at=NOW(),
+            user_final_status=$1,
+            status=$2
+        WHERE id=$3
+      `,
+      [userFinal, newStatus, id]
+    );
 
     return res.json({ ok: true });
   } catch (e) {
@@ -775,6 +1045,13 @@ app.delete("/api/admin/orders/:id", requireAdmin, (req, res) => {
 // =====================
 // Boot
 // =====================
-initDb();
-ensureAdminFromEnv();
-app.listen(PORT, () => console.log(`✅ Server en ${APP_ORIGIN}`));
+async function boot() {
+  await initDb();
+  await ensureAdminFromEnv();
+  app.listen(PORT, () => console.log(`✅ Server en ${APP_ORIGIN}`));
+}
+
+boot().catch((e) => {
+  console.error("BOOT ERROR:", e);
+  process.exit(1);
+});
