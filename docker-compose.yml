@@ -3,10 +3,8 @@ services:
     image: postgres:16-alpine
     container_name: pizzeria-db
     restart: unless-stopped
-    environment:
-      POSTGRES_DB: pizzeria
-      POSTGRES_USER: pizzeria
-      POSTGRES_PASSWORD: pizzeria
+    env_file:
+      - ./config.env
     volumes:
       - pgdata:/var/lib/postgresql/data
     ports:
@@ -20,21 +18,8 @@ services:
       dockerfile: server/Dockerfile
     container_name: pizzeria-app
     restart: unless-stopped
-    environment:
-      PORT: "3000"
-      APP_ORIGIN: "http://localhost:3000,http://192.168.1.115:3000,https://meinfuhrer.share.zrok.io"
-      SESSION_SECRET: "MEGUSTANlaspizzas1901070803"
-      DATABASE_URL: "postgres://pizzeria:pizzeria@db:5432/pizzeria"
-      ADMIN_USERNAME: "alex"
-      ADMIN_EMAIL: "arodriguezarasil@gmail.com"
-      ADMIN_PASSWORD: "Pizza12345"
-      # OAuth / Firebase
-      GOOGLE_CLIENT_ID: "292923743751-kt6l2p0npcba64f9irge2itrn5ps8k5m.apps.googleusercontent.com"
-      SMTP_HOST: "smtp.gmail.com"
-      SMTP_PORT: 465
-      SMTP_SECURE: true
-      SMTP_USER: "arodriguezarasil@gmail.com"
-      SMTP_PASS: "tftx uicd xfda pirm"
+    env_file:
+      - ./config.env
     depends_on:
       - db
     networks:

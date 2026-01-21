@@ -1,5 +1,29 @@
-/server/.env
-/server/pizzeria.sqlite
-/server/pizzeria.sqlite-shm
-/server/pizzeria.sqlite-wal
-/server/node_modules/
+# Dependencias
+**/node_modules/
+
+# Archivos de entorno / secretos
+.env
+.env.*
+config.env
+config.env.*
+!config.env.example
+
+# Bases de datos locales
+*.sqlite
+*.sqlite3
+*.db
+*.db-shm
+*.db-wal
+*.sqlite-shm
+*.sqlite-wal
+
+# Logs
+*.log
+
+# OS/Editor
+.DS_Store
+.idea/
+.vscode/
+
+# Docker
+**/.env.docker
