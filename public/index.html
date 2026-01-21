@@ -1,0 +1,862 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>IL FORNO DI ALESSANDRO</title>
+
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600&family=Montserrat:wght@400;500&display=swap" rel="stylesheet">
+
+<style>
+body { margin: 0; padding: 0; font-family: 'Montserrat', sans-serif; background: #2b2b2b; }
+.menu { max-width: 900px; margin: 60px auto; background: #faf7f2; padding: 45px 55px 50px; border-radius: 18px; box-shadow: 0 18px 45px rgba(0,0,0,0.35); position: relative; }
+.menu::before { content: ""; position: absolute; top: 0; left: 0; height: 14px; width: 100%; background: linear-gradient(to right,#1e7f43 0%,#1e7f43 33.33%,#ffffff 33.33%,#ffffff 66.66%,#8c1d18 66.66%,#8c1d18 100%); }
+h1 { text-align: center; font-family: 'Playfair Display', serif; font-size: 44px; margin: 10px 0 45px; color: #8c1d18; letter-spacing: 3px; }
+.pizzas { display: grid; grid-template-columns: 1fr 1fr; column-gap: 60px; row-gap: 26px; }
+.pizza { display: block; cursor: pointer; transition: transform 0.10s ease; }
+.pizza:hover { transform: translateY(-1px); }
+.pizza-header { display: flex; align-items: center; gap: 10px; }
+.numero { width: 26px; height: 26px; border-radius: 50%; background: #8c1d18; color: #fff; font-size: 14px; font-weight: 600; display: flex; align-items: center; justify-content: center; }
+.nombre { font-size: 18px; font-weight: 600; color: #222; }
+.ingredientes { font-size: 13px; color: #555; margin-left: 36px; margin-top: 4px; line-height: 1.4; }
+
+.floating-cart{
+  position: fixed;
+  right: 18px;
+  top: 18px;
+  border: 0;
+  padding: 12px 14px;
+  border-radius: 999px;
+  background: #8c1d18;
+  color: #fff;
+  font-weight: 700;
+  box-shadow: 0 10px 22px rgba(0,0,0,0.25);
+  cursor: pointer;
+  z-index: 60;
+}
+#cooldownTimer{ font-weight: 900; margin-left: 6px; }
+
+.floating-logout{
+  position: fixed;
+  left: 18px;
+  bottom: 18px;
+  border: 1px solid rgba(255,255,255,0.15);
+  padding: 12px 14px;
+  border-radius: 999px;
+  background: rgba(255,255,255,0.10);
+  color: #fff;
+  font-weight: 800;
+  box-shadow: 0 10px 22px rgba(0,0,0,0.25);
+  cursor: pointer;
+  z-index: 60;
+  backdrop-filter: blur(6px);
+}
+
+.floating-admin{
+  position: fixed;
+  left: 18px;
+  top: 18px;
+  border: 0;
+  padding: 12px 14px;
+  border-radius: 999px;
+  background: #1e7f43;
+  color: #fff;
+  font-weight: 900;
+  box-shadow: 0 10px 22px rgba(0,0,0,0.25);
+  cursor: pointer;
+  z-index: 60;
+}
+
+.cooldown-hint{
+  position: fixed;
+  right: 18px;
+  top: 64px;
+  max-width: 320px;
+  background: rgba(255,255,255,0.12);
+  border: 1px solid rgba(255,255,255,0.18);
+  color: #fff;
+  padding: 10px 12px;
+  border-radius: 14px;
+  font-weight: 800;
+  font-size: 12px;
+  box-shadow: 0 10px 22px rgba(0,0,0,0.25);
+  z-index: 60;
+  backdrop-filter: blur(8px);
+}
+
+.hidden{ display:none !important; }
+
+.modal, .drawer{
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.0);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  z-index: 50;
+  opacity: 0;
+  transition: opacity 180ms ease, background 180ms ease;
+}
+.drawer{ align-items: flex-end; }
+
+.modal.show, .drawer.show{ opacity: 1; background: rgba(0,0,0,0.55); }
+
+.modal-card, .drawer-card{
+  width: min(520px, 100%);
+  background: #faf7f2;
+  border-radius: 16px;
+  box-shadow: 0 18px 45px rgba(0,0,0,0.35);
+  overflow: hidden;
+  transform: translateY(10px) scale(0.98);
+  opacity: 0;
+  transition: transform 200ms ease, opacity 200ms ease;
+}
+.modal.show .modal-card, .drawer.show .drawer-card{ transform: translateY(0) scale(1); opacity: 1; }
+.drawer-card{ border-bottom-left-radius: 0; border-bottom-right-radius: 0; transform: translateY(16px); }
+.drawer.show .drawer-card{ transform: translateY(0); opacity: 1; }
+
+.modal-header{ display:flex; align-items:center; justify-content: space-between; padding: 16px 16px; background: #fff; border-bottom: 1px solid #eee; }
+.modal-header-centered{ position: relative; justify-content: center; }
+.modal-header-centered h2{ margin: 0; text-align: center; font-family: 'Playfair Display', serif; font-size: 22px; color: #8c1d18; letter-spacing: 1px; }
+.modal-header-centered .close-btn{ position: absolute; right: 16px; top: 50%; transform: translateY(-50%); }
+
+.modal-body{ padding: 16px; }
+.modal-footer{ padding: 16px; display:flex; gap:10px; justify-content: flex-end; }
+
+.btn{
+  border: 1px solid #ddd;
+  background: #fff;
+  border-radius: 10px;
+  padding: 10px 12px;
+  cursor: pointer;
+  font-weight: 700;
+}
+.btn.primary{ background:#8c1d18; border-color:#8c1d18; color:#fff; }
+
+.muted{ color:#555; font-size: 13px; }
+.row{ display:flex; gap:10px; align-items:center; margin-top: 12px; }
+.row input{ flex:1; padding: 10px; border-radius:10px; border:1px solid #ddd; background:#fff; }
+
+.chips{ display:flex; flex-wrap: wrap; gap:8px; margin: 8px 0 14px; }
+.chip{
+  border: 1px solid #ddd;
+  background:#fff;
+  padding: 8px 10px;
+  border-radius: 999px;
+  font-size: 13px;
+  cursor:pointer;
+  user-select: none;
+}
+.chip.active{ border-color:#8c1d18; box-shadow: 0 0 0 2px rgba(140,29,24,0.12); }
+
+.cart-items{ padding: 16px; display:flex; flex-direction: column; gap: 10px; }
+.cart-item{ background:#fff; border:1px solid #eee; border-radius: 12px; padding: 12px; }
+.cart-item-title{ font-weight:800; }
+.cart-item-small{ color:#555; font-size: 12px; margin-top:6px; line-height: 1.45; }
+.cart-item-actions{ margin-top: 10px; display:flex; justify-content: flex-end; }
+
+.section-head{
+  display:flex; align-items:center; gap:10px;
+  padding: 10px 12px; border-radius: 12px;
+  background: #fff; border: 1px solid #eee;
+  margin: 6px 0 10px; font-weight: 900; color: #222;
+}
+.section-head .icon{ width: 28px; height: 28px; display:flex; align-items:center; justify-content:center; border-radius: 10px; background: #f3f3f3; font-size: 16px; }
+.section-head.remove{ border-left: 4px solid #8c1d18; }
+.section-head.extra{ border-left: 4px solid #1e7f43; }
+
+.chips-remove .chip.active{ border-color:#8c1d18; background: rgba(140,29,24,0.08); box-shadow: 0 0 0 2px rgba(140,29,24,0.10); }
+.chips-extra .chip.active{ border-color:#1e7f43; background: rgba(30,127,67,0.10); box-shadow: 0 0 0 2px rgba(30,127,67,0.10); }
+
+.modal-body hr{ border: 0; height: 1px; background: #e9e6e1; margin: 14px 0; }
+
+.badge{
+  display:inline-block; font-size: 11px; font-weight: 900;
+  padding: 3px 8px; border-radius: 999px;
+  border: 1px solid #ddd; background: #fff; margin-right: 6px;
+}
+.badge.remove{ border-color: rgba(140,29,24,0.35); background: rgba(140,29,24,0.08); }
+.badge.extra{ border-color: rgba(30,127,67,0.35); background: rgba(30,127,67,0.10); }
+
+.opt-box{ background:#fff; border:1px solid #eee; border-radius: 12px; padding: 12px; margin-top: 10px; }
+.opt-line{ display:flex; align-items:center; justify-content: space-between; gap: 12px; padding: 10px 8px; border-radius: 10px; }
+.opt-line + .opt-line{ border-top: 1px dashed #eee; }
+.opt-name{ font-weight: 800; color:#222; }
+.opt-actions{ display:flex; gap:8px; }
+
+.btn.small{ padding: 8px 12px; border-radius: 999px; font-size: 13px; font-weight: 900; transition: transform 120ms ease, opacity 120ms ease, box-shadow 120ms ease; }
+.btn.small:active{ transform: scale(0.98); }
+.btn.yes, .btn.no{ opacity: 0.55; box-shadow: none; }
+.btn.yes.active{ opacity: 1; border-color: #1e7f43; background: #1e7f43; color: #fff; box-shadow: 0 8px 18px rgba(30,127,67,0.25); }
+.btn.no.active{ opacity: 1; border-color: #8c1d18; background: #8c1d18; color: #fff; box-shadow: 0 8px 18px rgba(140,29,24,0.25); }
+
+@media print{
+  body { background: #fff; }
+  .menu { margin: 0; box-shadow: none; border-radius: 0; }
+  .floating-cart, .floating-logout, .floating-admin, .modal, .drawer, .cooldown-hint { display:none !important; }
+}
+.welcomeUser{
+  text-align: center;
+  font-family: 'Playfair Display', serif;
+  font-size: 28px;
+  font-weight: 600;
+  letter-spacing: 1.2px;
+  color: #f6f1e7; /* marfil cálido */
+  margin-top: 26px;
+  margin-bottom: 20px;
+  position: relative;
+  text-shadow:
+    0 2px 0 rgba(0,0,0,0.15),
+    0 10px 28px rgba(0,0,0,0.55);
+}
+
+/* línea decorativa estilo rótulo */
+.welcomeUser::before{
+  content: "";
+  display: block;
+  width: 140px;
+  height: 2px;
+  margin: 0 auto 10px;
+  background: linear-gradient(
+    to right,
+    #1e7f43,
+    #ffffff,
+    #8c1d18
+  );
+  opacity: 0.85;
+  border-radius: 999px;
+}
+
+.welcomeUser .pizza{
+  margin-left: 10px;
+  font-size: 30px;
+  filter: drop-shadow(0 4px 6px rgba(0,0,0,0.35));
+}
+
+</style>
+</head>
+
+<body>
+
+<div id="welcomeUser" class="welcomeUser">
+  Benvenuti… <span class="pizza">🍕</span>
+</div>
+
+<div class="menu">
+  <h1>IL FORNO DI ALESSANDRO</h1>
+
+	
+
+
+
+
+  <div class="pizzas">
+    <div class="pizza" data-id="1" data-nombre="Margherita" data-ingredientes="Salsa de tomate, Queso" data-precio="9.50">
+      <div class="pizza-header"><div class="numero">1</div><div class="nombre">Margherita</div></div>
+      <div class="ingredientes">(Salsa de tomate y queso)</div>
+    </div>
+
+    <div class="pizza" data-id="2" data-nombre="Carbonara" data-ingredientes="Salsa carbonara, Cebolla, Queso, Bacon, Champiñones" data-precio="11.00">
+      <div class="pizza-header"><div class="numero">2</div><div class="nombre">Carbonara</div></div>
+      <div class="ingredientes">(Salsa carbonara, cebolla, queso, bacon y champiñones)</div>
+    </div>
+
+    <div class="pizza" data-id="3" data-nombre="Bolognese" data-ingredientes="Salsa boloñesa, Queso, Bacon, Carne picada y/o Pollo ahumado" data-precio="11.00">
+      <div class="pizza-header"><div class="numero">3</div><div class="nombre">Bolognese</div></div>
+      <div class="ingredientes">(Salsa boloñesa, queso, bacon, carne picada y/o pollo ahumado)</div>
+    </div>
+
+    <div class="pizza" data-id="4" data-nombre="Barbecue" data-ingredientes="Salsa BBQ, Queso, Bacon, Cebolla, Carne picada y/o Pollo ahumado" data-precio="11.50">
+      <div class="pizza-header"><div class="numero">4</div><div class="nombre">Barbecue</div></div>
+      <div class="ingredientes">(Salsa BBQ, queso, bacon, cebolla, carne picada y/o pollo ahumado)</div>
+    </div>
+
+    <div class="pizza" data-id="5" data-nombre="Trufatta" data-ingredientes="Concentrado de trufa, Queso, Cebolla caramelizada, Aceitunas negras, Champiñones" data-precio="12.50">
+      <div class="pizza-header"><div class="numero">5</div><div class="nombre">Trufatta</div></div>
+      <div class="ingredientes">(Concentrado de trufa, queso, cebolla caramelizada, olivas negras y champiñones)</div>
+    </div>
+
+    <div class="pizza" data-id="6" data-nombre="Quattro Formaggi" data-ingredientes="Base de tomate, Mozzarella, Emmental, Parmesano, Queso azul" data-precio="12.00">
+      <div class="pizza-header"><div class="numero">6</div><div class="nombre">Quattro Formaggi</div></div>
+      <div class="ingredientes">(Base de tomate, mozzarella, emmental, parmesano y queso azul)</div>
+    </div>
+
+    <div class="pizza" data-id="7" data-nombre="Pepperoni" data-ingredientes="Salsa de tomate, Queso, Bacon y/o Jamón dulce, Pepperoni" data-precio="11.50">
+      <div class="pizza-header"><div class="numero">7</div><div class="nombre">Pepperoni</div></div>
+      <div class="ingredientes">(Salsa de tomate, queso, bacon y/o jamón dulce y pepperoni)</div>
+    </div>
+
+    <div class="pizza" data-id="8" data-nombre="Mein Schatz" data-ingredientes="Sobrasada, Queso, Espárragos, Cebolla caramelizada, Queso de cabra" data-precio="12.50">
+      <div class="pizza-header"><div class="numero">8</div><div class="nombre">Mein Schatz</div></div>
+      <div class="ingredientes">(Sobrasada, queso, espárragos, cebolla caramelizada y queso de cabra)</div>
+    </div>
+
+    <div class="pizza" data-id="9" data-nombre="Prosciutto e Formaggio" data-ingredientes="Salsa de tomate, Queso, Jamón dulce" data-precio="10.50">
+      <div class="pizza-header"><div class="numero">9</div><div class="nombre">Prosciutto e Formaggio</div></div>
+      <div class="ingredientes">(Salsa de tomate, queso y jamón dulce)</div>
+    </div>
+
+    <div class="pizza" data-id="10" data-nombre="Prosciutto e Bacon" data-ingredientes="Salsa de tomate, Queso, Jamón dulce, Bacon" data-precio="11.00">
+      <div class="pizza-header"><div class="numero">10</div><div class="nombre">Prosciutto e Bacon</div></div>
+      <div class="ingredientes">(Salsa de tomate, queso, jamón dulce y bacon)</div>
+    </div>
+
+    <div class="pizza" data-id="11" data-nombre="Tonno e Bacon" data-ingredientes="Salsa de tomate, Queso, Atún, Bacon" data-precio="11.00">
+      <div class="pizza-header"><div class="numero">11</div><div class="nombre">Tonno e Bacon</div></div>
+      <div class="ingredientes">(Salsa de tomate, queso, atún y bacon)</div>
+    </div>
+
+    <div class="pizza" data-id="12" data-nombre="La specità di Mister" data-ingredientes="Salsa de tomate, Queso, Bacon y/o Jamón dulce, Carne de kebab, Salsa blanca" data-precio="12.50">
+      <div class="pizza-header"><div class="numero">12</div><div class="nombre">La specità di Mister</div></div>
+      <div class="ingredientes">(Salsa de tomate, queso, bacon y/o jamón dulce, carne de kebab y salsa blanca)</div>
+    </div>
+
+    <div class="pizza" data-id="13" data-nombre="Segarro amego?" data-ingredientes="Salsa de tomate, Queso, Jamón serrano" data-precio="11.50">
+      <div class="pizza-header"><div class="numero">13</div><div class="nombre">Segarro amego?</div></div>
+      <div class="ingredientes">(Salsa de tomate, queso y jamón serrano)</div>
+    </div>
+  </div>
+</div>
+
+<button id="btnAdmin" class="floating-admin hidden">🛠 Admin</button>
+<button id="btnMyOrders" class="floating-admin hidden" style="top: 64px; background:#ffffff; color:#222; border:1px solid rgba(0,0,0,0.12);">
+  📜 Mis pedidos
+</button>
+
+<button id="btnCarrito" class="floating-cart">
+  🧺 Carrito (<span id="cartCount">0</span>) <span id="cooldownTimer"></span>
+</button>
+<div id="cooldownHint" class="cooldown-hint hidden" aria-live="polite"></div>
+
+<button id="btnLogout" class="floating-logout">⎋ Cerrar sesión</button>
+
+<div id="preModal" class="modal hidden" aria-hidden="true">
+  <div class="modal-card">
+    <div class="modal-header modal-header-centered">
+      <h2 id="preTitle">¿Quieres añadir…?</h2>
+      <button id="closePre" class="btn close-btn">✕</button>
+    </div>
+    <div class="modal-body">
+      <p class="muted">Esta pizza tiene ingredientes opcionales. Elige si los quieres incluir:</p>
+      <div id="optList" class="opt-box"></div>
+    </div>
+    <div class="modal-footer">
+      <button id="preContinue" class="btn primary">Continuar</button>
+    </div>
+  </div>
+</div>
+
+<div id="modal" class="modal hidden" aria-hidden="true">
+  <div class="modal-card">
+    <div class="modal-header modal-header-centered">
+      <h2 id="modalTitle">Pizza</h2>
+      <button id="closeModal" class="btn close-btn">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="section-head remove"><span class="icon">❌</span><span class="text">Quitar ingredientes</span></div>
+      <div id="removeList" class="chips chips-remove"></div>
+      <hr/>
+      <div class="section-head extra"><span class="icon">➕</span><span class="text">Añadir extra (doble)</span></div>
+      <div id="extraList" class="chips chips-extra"></div>
+
+      <div class="row"><label class="muted">Cantidad</label><input id="qty" type="number" min="1" value="1" /></div>
+      <div class="row"><label class="muted">Nota</label><input id="note" type="text" placeholder="Ej: sin cebolla, bien hecha..." /></div>
+    </div>
+    <div class="modal-footer">
+      <button id="addToCart" class="btn primary">Añadir al carrito</button>
+    </div>
+  </div>
+</div>
+
+<div id="drawer" class="drawer hidden" aria-hidden="true">
+  <div class="drawer-card">
+    <div class="modal-header">
+      <h2 style="margin:0;">Tu pedido</h2>
+      <button id="closeDrawer" class="btn">✕</button>
+    </div>
+    <div id="cartItems" class="cart-items"></div>
+    <div class="modal-footer">
+      <button id="sendOrder" class="btn primary">Enviar pedido</button>
+      <button id="clearCart" class="btn">Vaciar</button>
+    </div>
+  </div>
+</div>
+
+<script>
+  // ====== Logout al darle atrás / cache ======
+  async function forceLogoutToWelcome(){
+    try { await fetch("/api/logout", { method:"POST", credentials:"include" }); } catch {}
+    window.location.replace("/welcome.html");
+  }
+  window.addEventListener("popstate", forceLogoutToWelcome);
+  window.addEventListener("pageshow", (e) => { if (e.persisted) forceLogoutToWelcome(); });
+  history.pushState({menu:true}, "", location.href);
+
+  const state = {
+    pendingPizza: null,
+    pendingChoices: new Map(),
+    selectedPizza: null,
+    remove: new Set(),
+    extras: new Set(),
+    cart: [],
+    me: null
+  };
+
+  const modal = document.getElementById("modal");
+  const drawer = document.getElementById("drawer");
+  const preModal = document.getElementById("preModal");
+
+  const modalTitle = document.getElementById("modalTitle");
+  const removeList = document.getElementById("removeList");
+  const extraList = document.getElementById("extraList");
+  const qtyInput = document.getElementById("qty");
+  const noteInput = document.getElementById("note");
+  const cartItems = document.getElementById("cartItems");
+
+  const preTitle = document.getElementById("preTitle");
+  const optList = document.getElementById("optList");
+
+  const btnAdmin = document.getElementById("btnAdmin");
+  const btnLogout = document.getElementById("btnLogout");
+  const btnMyOrders = document.getElementById("btnMyOrders");
+
+  const cooldownHint = document.getElementById("cooldownHint");
+
+  function showOverlay(el){ el.classList.remove("hidden"); void el.offsetWidth; el.classList.add("show"); el.setAttribute("aria-hidden","false"); }
+  function hideOverlay(el){ el.classList.remove("show"); el.setAttribute("aria-hidden","true"); setTimeout(() => el.classList.add("hidden"), 210); }
+  function showModal(){ showOverlay(modal); }
+  function hideModal(){ hideOverlay(modal); }
+  function showDrawer(){ showOverlay(drawer); }
+  function hideDrawer(){ hideOverlay(drawer); }
+  function showPre(){ showOverlay(preModal); }
+  function hidePre(){ hideOverlay(preModal); }
+
+  // ========= COOLDOWN 10 MIN =========
+  const COOLDOWN_KEY = "pizzeriaCooldownUntil";
+  let cooldownTimer = null;
+
+  function getCooldownUntil(){
+    const v = localStorage.getItem(COOLDOWN_KEY);
+    const n = Number(v);
+    return Number.isFinite(n) ? n : 0;
+  }
+  function setCooldownSeconds(sec){
+    const until = Date.now() + Math.max(0, sec) * 1000;
+    localStorage.setItem(COOLDOWN_KEY, String(until));
+    startCooldownTick();
+  }
+  function clearCooldown(){
+    localStorage.removeItem(COOLDOWN_KEY);
+    stopCooldownTick();
+    setOrderingEnabled(true);
+    updateCartButtonLabel(0);
+    setHintVisible(false, 0);
+  }
+  function formatMMSS(totalSec){
+    const s = Math.max(0, Math.floor(totalSec));
+    const mm = String(Math.floor(s / 60)).padStart(2, "0");
+    const ss = String(s % 60).padStart(2, "0");
+    return `${mm}:${ss}`;
+  }
+
+  function setOrderingEnabled(enabled){
+    const btn = document.getElementById("btnCarrito");
+    btn.disabled = !enabled;
+    btn.style.opacity = enabled ? "1" : "0.55";
+    btn.style.cursor = enabled ? "pointer" : "not-allowed";
+
+    document.querySelectorAll(".pizza").forEach(p => {
+      p.style.opacity = enabled ? "1" : "0.72";
+      p.style.pointerEvents = enabled ? "auto" : "none";
+    });
+  }
+
+  function updateCartButtonLabel(remainingSec){
+    const timerEl = document.getElementById("cooldownTimer");
+    const btn = document.getElementById("btnCarrito");
+    if (remainingSec > 0) {
+      btn.title = `Podrás pedir de nuevo en ${formatMMSS(remainingSec)}`;
+      timerEl.textContent = `· ${formatMMSS(remainingSec)}`;
+    } else {
+      btn.title = "";
+      timerEl.textContent = "";
+    }
+  }
+
+  function setHintVisible(visible, remainingSec){
+    if (!cooldownHint) return;
+    if (!visible) {
+      cooldownHint.classList.add("hidden");
+      cooldownHint.textContent = "";
+      return;
+    }
+    cooldownHint.classList.remove("hidden");
+    cooldownHint.textContent = `⏳ Podrás pedir de nuevo en ${formatMMSS(remainingSec)}.`;
+  }
+
+  function startCooldownTick(){
+    stopCooldownTick();
+    const tick = () => {
+      const until = getCooldownUntil();
+      const remainingMs = until - Date.now();
+      const remainingSec = Math.ceil(remainingMs / 1000);
+
+      if (remainingSec > 0) {
+        setOrderingEnabled(false);
+        updateCartButtonLabel(remainingSec);
+        setHintVisible(true, remainingSec);
+      } else {
+        clearCooldown();
+        updateCartCount();
+      }
+    };
+    tick();
+    cooldownTimer = setInterval(tick, 250);
+  }
+
+  function stopCooldownTick(){
+    if (cooldownTimer) clearInterval(cooldownTimer);
+    cooldownTimer = null;
+  }
+
+  // iniciar si hay cooldown
+  startCooldownTick();
+
+  // ========= Protección login + mostrar ADMIN =========
+  (async () => {
+    try {
+      const r = await fetch("/api/me", { credentials: "include" });
+      const data = await r.json();
+      if (!data.loggedIn) { window.location.href = "/welcome.html"; return; }
+      state.me = data.user || null;
+      if (state.me && state.me.role === "ADMIN") btnAdmin.classList.remove("hidden");
+	  // Mostrar "Mis pedidos" solo a usuarios (no admin)
+	  if (state.me && state.me.role !== "ADMIN") btnMyOrders.classList.remove("hidden");
+
+    } catch {
+      window.location.href = "/welcome.html";
+    }
+  })();
+
+  btnAdmin.addEventListener("click", () => { window.location.href = "/admin.html"; });
+  btnMyOrders.addEventListener("click", () => {
+  window.location.href = "/my-orders.html";
+});
+
+
+  btnLogout.addEventListener("click", async () => {
+    try { await fetch("/api/logout", { method: "POST", credentials: "include" }); }
+    finally { window.location.href = "/welcome.html"; }
+  });
+
+  document.getElementById("closeModal").addEventListener("click", hideModal);
+
+  document.getElementById("btnCarrito").addEventListener("click", () => {
+    const remainingSec = Math.ceil((getCooldownUntil() - Date.now()) / 1000);
+    if (remainingSec > 0) return;
+    renderCart(); showDrawer();
+  });
+
+  document.getElementById("closeDrawer").addEventListener("click", hideDrawer);
+
+  document.getElementById("closePre").addEventListener("click", () => {
+    state.pendingPizza = null;
+    state.pendingChoices.clear();
+    hidePre();
+  });
+
+  modal.addEventListener("click", (e) => { if (e.target === modal) hideModal(); });
+  drawer.addEventListener("click", (e) => { if (e.target === drawer) hideDrawer(); });
+  preModal.addEventListener("click", (e) => { if (e.target === preModal) document.getElementById("closePre").click(); });
+
+  function parseIngredientes(raw){
+    const parts = raw.split(",").map(s => s.trim()).filter(Boolean);
+    const base = [];
+    const optional = [];
+    for (const p of parts){
+      if (p.toLowerCase().includes("y/o")){
+        const [left, right] = p.split(/y\/o/i).map(s => s.trim()).filter(Boolean);
+        if (left) base.push(left);
+        if (right) optional.push(right);
+      } else base.push(p);
+    }
+    return { base, optional };
+  }
+
+  document.querySelectorAll(".pizza").forEach(el => {
+    el.addEventListener("click", () => {
+      const pizza = {
+        id: el.dataset.id,
+        nombre: el.dataset.nombre,
+        rawIngredientes: el.dataset.ingredientes || "",
+        precio: Number(el.dataset.precio || 0)
+      };
+
+      const { base, optional } = parseIngredientes(pizza.rawIngredientes);
+      qtyInput.value = 1;
+      noteInput.value = "";
+
+      if (optional.length > 0){
+        state.pendingPizza = { ...pizza, baseIngredientes: base, optionalIngredientes: optional };
+        state.pendingChoices = new Map(optional.map(x => [x, false]));
+        renderOptionalScreen();
+        showPre();
+      } else {
+        openCustomization({ ...pizza, ingredientes: base });
+      }
+    });
+  });
+
+  function renderOptionalScreen(){
+    preTitle.textContent = state.pendingPizza.nombre;
+    optList.innerHTML = "";
+
+    state.pendingPizza.optionalIngredientes.forEach(ing => {
+      const line = document.createElement("div");
+      line.className = "opt-line";
+
+      const name = document.createElement("div");
+      name.className = "opt-name";
+      name.textContent = ing;
+
+      const actions = document.createElement("div");
+      actions.className = "opt-actions";
+
+      const yes = document.createElement("button");
+      yes.className = "btn small yes";
+      yes.textContent = "Sí";
+
+      const no = document.createElement("button");
+      no.className = "btn small no active";
+      no.textContent = "No";
+
+      const setChoice = (val) => {
+        state.pendingChoices.set(ing, val);
+        if (val){ yes.classList.add("active"); no.classList.remove("active"); }
+        else { no.classList.add("active"); yes.classList.remove("active"); }
+      };
+
+      yes.addEventListener("click", () => setChoice(true));
+      no.addEventListener("click", () => setChoice(false));
+
+      actions.appendChild(yes);
+      actions.appendChild(no);
+
+      line.appendChild(name);
+      line.appendChild(actions);
+      optList.appendChild(line);
+    });
+  }
+
+  document.getElementById("preContinue").addEventListener("click", () => {
+    if (!state.pendingPizza) return;
+
+    const selectedOptional = [];
+    for (const [ing, val] of state.pendingChoices.entries()){
+      if (val) selectedOptional.push(ing);
+    }
+
+    const finalIngredientes = [...state.pendingPizza.baseIngredientes, ...selectedOptional];
+    const pizzaFinal = { id: state.pendingPizza.id, nombre: state.pendingPizza.nombre, precio: state.pendingPizza.precio, ingredientes: finalIngredientes };
+
+    state.pendingPizza = null;
+    state.pendingChoices.clear();
+
+    hidePre();
+    openCustomization(pizzaFinal);
+  });
+
+  function openCustomization(pizza){
+    state.selectedPizza = pizza;
+    state.remove = new Set();
+    state.extras = new Set();
+    modalTitle.textContent = pizza.nombre;
+    renderChips();
+    showModal();
+  }
+
+  function renderChips(){
+    removeList.innerHTML = "";
+    state.selectedPizza.ingredientes.forEach(ing => {
+      const chip = makeChip(ing, state.remove.has(ing), () => toggleSet(state.remove, ing));
+      removeList.appendChild(chip);
+    });
+
+    extraList.innerHTML = "";
+    state.selectedPizza.ingredientes.forEach(ing => {
+      const chip = makeChip(ing, state.extras.has(ing), () => toggleSet(state.extras, ing));
+      extraList.appendChild(chip);
+    });
+  }
+
+  function makeChip(label, active, onToggle){
+    const chip = document.createElement("div");
+    chip.className = "chip" + (active ? " active" : "");
+    chip.textContent = label;
+    chip.addEventListener("click", () => {
+      onToggle();
+      chip.classList.toggle("active");
+    });
+    return chip;
+  }
+
+  function toggleSet(set, value){
+    if (set.has(value)) set.delete(value);
+    else set.add(value);
+  }
+
+  document.getElementById("addToCart").addEventListener("click", () => {
+    const qty = Math.max(1, Number(qtyInput.value || 1));
+    const note = (noteInput.value || "").trim();
+
+    const item = {
+      id: (crypto && crypto.randomUUID) ? crypto.randomUUID() : String(Date.now()) + Math.random(),
+      productoId: state.selectedPizza.id,
+      nombre: state.selectedPizza.nombre,
+      qty,
+      remove: Array.from(state.remove),
+      extras: Array.from(state.extras),
+      note,
+      basePrice: state.selectedPizza.precio
+    };
+
+    state.cart.push(item);
+    updateCartCount();
+    hideModal();
+  });
+
+  function updateCartCount(){
+    const total = state.cart.reduce((acc, it) => acc + it.qty, 0);
+    const countEl = document.getElementById("cartCount");
+    if (countEl) countEl.textContent = String(total);
+  }
+
+  function escapeHtml(str){
+    return str.replace(/[&<>"']/g, (m) => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;" }[m]));
+  }
+
+  function renderCart(){
+    cartItems.innerHTML = "";
+
+    if (state.cart.length === 0){
+      const p = document.createElement("p");
+      p.className = "muted";
+      p.textContent = "Tu carrito está vacío.";
+      cartItems.appendChild(p);
+      return;
+    }
+
+    state.cart.forEach((it) => {
+      const div = document.createElement("div");
+      div.className = "cart-item";
+
+      const title = document.createElement("div");
+      title.className = "cart-item-title";
+      title.textContent = `${it.qty} × ${it.nombre}`;
+
+      const details = document.createElement("div");
+      details.className = "cart-item-small";
+
+      if (!it.remove.length && !it.extras.length && !it.note) {
+        details.textContent = "Sin cambios";
+      } else {
+        let html = "";
+        if (it.remove.length) html += `<span class="badge remove">SIN</span>${it.remove.join(", ")}<br/>`;
+        if (it.extras.length) html += `<span class="badge extra">EXTRA</span>${it.extras.join(", ")}<br/>`;
+        if (it.note) html += `<span class="badge">NOTA</span>${escapeHtml(it.note)}`;
+        details.innerHTML = html;
+      }
+
+      const actions = document.createElement("div");
+      actions.className = "cart-item-actions";
+      const btn = document.createElement("button");
+      btn.className = "btn";
+      btn.textContent = "Eliminar";
+      btn.addEventListener("click", () => {
+        state.cart = state.cart.filter(x => x.id !== it.id);
+        updateCartCount();
+        renderCart();
+      });
+      actions.appendChild(btn);
+
+      div.appendChild(title);
+      div.appendChild(details);
+      div.appendChild(actions);
+
+      cartItems.appendChild(div);
+    });
+  }
+
+  document.getElementById("clearCart").addEventListener("click", () => {
+    state.cart = [];
+    updateCartCount();
+    renderCart();
+  });
+
+  document.getElementById("sendOrder").addEventListener("click", async () => {
+    if (state.cart.length === 0) return;
+
+    const payload = {
+      personName: state.me?.username || "cliente",
+      items: state.cart,
+      createdAt: new Date().toISOString()
+    };
+
+    try {
+      const r = await fetch("/api/orders", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify( payload )
+      });
+
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({}));
+        if (r.status === 429 && err.retryAfterSec) setCooldownSeconds(Number(err.retryAfterSec));
+        alert(err.error || "Error enviando pedido");
+        return;
+      }
+
+      if (state.me?.role !== "ADMIN") setCooldownSeconds(10 * 60);
+
+      alert("✅ Pedido enviado");
+
+      state.cart = [];
+      updateCartCount();
+      renderCart();
+      hideDrawer();
+
+    } catch {
+      alert("Error enviando pedido (sin conexión).");
+    }
+  });
+
+	(async () => {
+  try {
+    const r = await fetch("/api/me", { credentials:"include" });
+    const d = await r.json().catch(() => ({}));
+    const el = document.getElementById("welcomeUser");
+    if (!el) return;
+
+    if (d?.loggedIn && d?.user?.username) {
+      const name = d.user.username;
+      const prettyName = name.charAt(0).toUpperCase() + name.slice(1);
+
+      el.textContent = `Benvenuti ${prettyName}`;
+      el.insertAdjacentHTML("beforeend", ` <span class="pizza">🍕</span>`);
+    } else {
+      window.location.replace("/welcome.html");
+    }
+  } catch {
+    window.location.replace("/welcome.html");
+  }
+})();
+
+
+
+
+</script>
+
+</body>
+</html>

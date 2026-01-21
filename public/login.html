@@ -1,0 +1,278 @@
+<!-- ===== public/login.html ===== -->
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Iniciar sesión</title>
+
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600&family=Montserrat:wght@400;500;800;900&display=swap" rel="stylesheet">
+
+<style>
+  *{ box-sizing:border-box; }
+  body{
+    margin:0;
+    font-family:'Montserrat', Arial, sans-serif;
+    background:#2b2b2b;
+    min-height:100vh;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    padding:18px;
+    color:#222;
+  }
+
+  .card{
+    width:min(520px, 100%);
+    background:#faf7f2;
+    border-radius:18px;
+    box-shadow:0 18px 45px rgba(0,0,0,.35);
+    overflow:hidden;
+    position:relative;
+  }
+
+  .card::before{
+    content:"";
+    position:absolute;
+    top:0; left:0;
+    width:100%; height:12px;
+    background: linear-gradient(
+      to right,
+      #1e7f43 0%,
+      #1e7f43 33.33%,
+      #ffffff 33.33%,
+      #ffffff 66.66%,
+      #8c1d18 66.66%,
+      #8c1d18 100%
+    );
+  }
+
+  .head{
+    padding:18px 18px 10px;
+    background:#fff;
+    border-bottom:1px solid #eee;
+    text-align:center;
+  }
+
+  h1{
+    margin:10px 0 0;
+    font-family:'Playfair Display', serif;
+    color:#8c1d18;
+    font-size:26px;
+    letter-spacing:1px;
+  }
+  .sub{
+    margin:6px 0 0;
+    color:#666;
+    font-size:12px;
+    font-weight:600;
+  }
+
+  .body{ padding:18px; }
+
+  .row{ margin-top:12px; }
+
+  .field{
+    background:#fff;
+    border:1px solid #e6e2dc;
+    border-radius:14px;
+    padding:12px;
+    box-shadow: 0 8px 18px rgba(0,0,0,0.06);
+  }
+  .field input{
+    width:100%;
+    border:0;
+    outline:0;
+    font-size:14px;
+    background:transparent;
+    padding:4px 2px;
+  }
+
+  .muted{
+    color:#777;
+    font-size:12px;
+    margin-top:10px;
+    line-height:1.4;
+    text-align:center;
+  }
+
+  .actions{
+    display:flex;
+    flex-direction:column;
+    gap:10px;
+    margin-top:14px;
+  }
+
+  .btn{
+    width:100%;
+    border:1px solid #ddd;
+    background:#fff;
+    padding:12px 14px;
+    border-radius:14px;
+    font-weight:900;
+    cursor:pointer;
+    transition: transform .12s ease, opacity .12s ease;
+  }
+  .btn:hover{ transform: translateY(-1px); opacity:.98; }
+
+  .btn.primary{
+    background:#8c1d18;
+    border-color:#8c1d18;
+    color:#fff;
+  }
+
+  .btn.google{
+    background:#fff;
+    border-color:#ddd;
+    color:#333;
+    font-weight:900;
+    opacity:.55;
+    cursor:not-allowed;
+  }
+
+  .btn.link{
+    background:transparent;
+    border-color:transparent;
+    color:#1e7f43;
+    font-weight:900;
+    padding:10px 14px;
+  }
+  .btn.link:hover{
+    transform:none;
+    opacity:1;
+    text-decoration:underline;
+  }
+
+  /* ✅ Nuevo: link “olvidé contraseña” más discreto */
+  .btn.forgot{
+    margin-top:-2px;
+    color:#8c1d18;
+  }
+
+  .msg{
+    margin-top:12px;
+    font-size:13px;
+    font-weight:800;
+    text-align:center;
+  }
+  .msg.ok{ color:#1e7f43; }
+  .msg.err{ color:#8c1d18; }
+</style>
+</head>
+
+<body>
+  <div class="card">
+    <div class="head">
+      <h1>Iniciar sesión</h1>
+      <div class="sub">Accede a la carta y haz tu pedido.</div>
+    </div>
+
+    <div class="body">
+      <div class="row">
+        <div class="field">
+          <input id="user" autocomplete="username" placeholder="Usuario o correo">
+        </div>
+      </div>
+
+      <div class="row">
+        <div class="field">
+          <input id="pass" type="password" autocomplete="current-password" placeholder="Contraseña">
+        </div>
+      </div>
+
+      <div class="actions">
+        <button id="btnLogin" class="btn primary">Entrar</button>
+
+        <!-- ✅ Nuevo: olvidé contraseña -->
+        <button id="btnForgot" class="btn link forgot">¿Has olvidado la contraseña?</button>
+
+        <button class="btn google" disabled>🔒 Iniciar sesión con Google (próximamente)</button>
+        <button id="btnGoRegister" class="btn link">No tengo cuenta → Registrarme</button>
+        <button id="btnBackWelcome" class="btn link">Volver</button>
+      </div>
+
+      <div id="msg" class="msg" style="display:none;"></div>
+
+      <div class="muted">
+        Si tu cuenta no está aprobada, no podrás entrar hasta que el admin la acepte.
+      </div>
+    </div>
+  </div>
+
+<script>
+  async function forceLogoutToWelcome(){
+    try { await fetch("/api/logout", { method:"POST", credentials:"include" }); } catch {}
+    window.location.replace("/welcome.html");
+  }
+
+  // Evita “volver atrás” a pantallas no deseadas
+  window.addEventListener("popstate", forceLogoutToWelcome);
+  window.addEventListener("pageshow", (e) => { if (e.persisted) forceLogoutToWelcome(); });
+  history.pushState({login:true}, "", location.href);
+
+  const $ = (id) => document.getElementById(id);
+  const msg = $("msg");
+
+  function showMsg(text, ok){
+    msg.style.display = "block";
+    msg.textContent = text;
+    msg.className = "msg " + (ok ? "ok" : "err");
+  }
+
+  async function doLogin(){
+    const usernameOrEmail = $("user").value.trim();
+    const password = $("pass").value;
+
+    if (!usernameOrEmail || !password){
+      showMsg("Rellena usuario/correo y contraseña.", false);
+      return;
+    }
+
+    const btn = $("btnLogin");
+    btn.disabled = true;
+    btn.textContent = "Entrando...";
+
+    try{
+      const r = await fetch("/api/login", {
+        method:"POST",
+        headers:{ "Content-Type":"application/json" },
+        credentials:"include",
+        body: JSON.stringify({ usernameOrEmail, password })
+      });
+
+      const d = await r.json().catch(()=>({}));
+
+      if (!r.ok){
+        showMsg(d.error || "Error iniciando sesión.", false);
+        return;
+      }
+
+      // OK -> carta
+      window.location.replace("/index.html");
+    } catch (e){
+      showMsg("No se pudo conectar con el servidor.", false);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = "Entrar";
+    }
+  }
+
+  $("btnLogin").addEventListener("click", doLogin);
+  $("_attachEnter")?.remove?.(); // por si existiera algo viejo (no pasa nada si no existe)
+  $("pass").addEventListener("keydown", (e)=>{ if (e.key === "Enter") doLogin(); });
+
+  $("btnForgot").addEventListener("click", ()=> window.location.href="/forgot-password.html");
+  $("btnGoRegister").addEventListener("click", ()=> window.location.href="/register.html");
+  $("btnBackWelcome").addEventListener("click", ()=> window.location.href="/welcome.html");
+
+  // Si ya está logueado, fuera de aquí
+  (async()=>{
+    try{
+      const r = await fetch("/api/me", { credentials:"include" });
+      const d = await r.json();
+      if (d.loggedIn) window.location.replace("/index.html");
+    } catch {}
+  })();
+</script>
+</body>
+</html>

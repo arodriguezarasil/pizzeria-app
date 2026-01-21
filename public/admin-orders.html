@@ -1,0 +1,382 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Pedidos - Admin</title>
+
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600&family=Montserrat:wght@400;500&display=swap" rel="stylesheet">
+
+<style>
+  *{ box-sizing:border-box; }
+  body{ margin:0; font-family:'Montserrat', Arial, sans-serif; background:#2b2b2b; color:#222; min-height:100vh; padding:18px; }
+  .wrap{ max-width:980px; margin:0 auto; }
+  .card{ background:#faf7f2; border-radius:18px; box-shadow:0 18px 45px rgba(0,0,0,.35); overflow:hidden; position:relative; }
+  .card::before{ content:""; position:absolute; top:0; left:0; width:100%; height:12px; background:linear-gradient(to right,#1e7f43 0%,#1e7f43 33.33%,#fff 33.33%,#fff 66.66%,#8c1d18 66.66%,#8c1d18 100%); }
+  .head{ padding:18px; display:flex; align-items:center; justify-content:space-between; gap:12px; border-bottom:1px solid #eee; background:#fff; }
+  h1{ margin:10px 0 0; font-family:'Playfair Display', serif; color:#8c1d18; font-size:22px; letter-spacing:1px; }
+  .actions{ display:flex; gap:10px; flex-wrap:wrap; justify-content:flex-end; }
+  .btn{ border:1px solid #ddd; background:#fff; padding:10px 12px; border-radius:12px; font-weight:900; cursor:pointer; transition: transform .12s ease, opacity .12s ease; white-space:nowrap; }
+  .btn:hover{ transform: translateY(-1px); opacity:.98; }
+  .btn.danger{ background:#8c1d18; border-color:#8c1d18; color:#fff; }
+  .btn.softDanger{ border-color:rgba(140,29,24,.35); background:rgba(140,29,24,.08); color:#8c1d18; }
+  .btn.softDanger:hover{ opacity:1; }
+
+  .body{ padding:18px; }
+  .muted{ color:#777; font-size:12px; }
+
+  .order{
+    background:#fff;
+    border:1px solid #eee;
+    border-radius:16px;
+    padding:14px;
+    margin-top:12px;
+    transition: background .15s ease, border-color .15s ease, transform .08s ease;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+    user-select: none;
+    position: relative;
+  }
+  .order:active{ transform: scale(0.995); }
+  .order.readyBg{ background: rgba(30,127,67,0.14); border-color: rgba(30,127,67,0.30); }
+  .order.prepBg{ background: rgba(251,188,5,0.14); border-color: rgba(251,188,5,0.35); }
+
+  .orderTop{ display:flex; justify-content:space-between; gap:12px; flex-wrap:wrap; align-items:flex-start; }
+  .orderTitle{ font-weight:900; }
+
+  .pill{ display:inline-block; padding:3px 8px; border-radius:999px; font-size:11px; font-weight:900; border:1px solid #ddd; background:#fff; margin-left:8px; }
+  .pill.received{ border-color:rgba(140,29,24,.25); background:rgba(140,29,24,.06); }
+  .pill.preparing{ border-color:rgba(251,188,5,.45); background:rgba(251,188,5,.12); }
+  .pill.ready{ border-color:rgba(30,127,67,.35); background:rgba(30,127,67,.10); }
+
+  .items{ margin-top:10px; display:flex; flex-direction:column; gap:10px; }
+  .it{ border:1px dashed #eee; border-radius:14px; padding:10px; }
+  .it b{ font-weight:900; }
+
+  .badges{ margin-top:6px; font-size:12px; color:#444; line-height:1.5; }
+  .badge{ display:inline-block; font-size:11px; font-weight:900; padding:3px 8px; border-radius:999px; border:1px solid #ddd; background:#fff; margin-right:6px; }
+  .badge.remove{ border-color:rgba(140,29,24,.35); background:rgba(140,29,24,.08); }
+  .badge.extra{ border-color:rgba(30,127,67,.35); background:rgba(30,127,67,.10); }
+
+  .orderActions{ margin-top:12px; display:flex; gap:10px; flex-wrap:wrap; justify-content:flex-end; }
+
+  /* Long-press progress */
+  .pressBar{
+    position:absolute;
+    left:12px;
+    right:12px;
+    bottom:10px;
+    height:6px;
+    background: rgba(0,0,0,0.06);
+    border-radius:999px;
+    overflow:hidden;
+    opacity:0;
+    transform: translateY(4px);
+    transition: opacity 120ms ease, transform 120ms ease;
+    pointer-events:none;
+  }
+  .pressBar > span{
+    display:block;
+    height:100%;
+    width:0%;
+    background: rgba(30,127,67,0.55);
+    border-radius:999px;
+  }
+  .order.pressing .pressBar{
+    opacity:1;
+    transform: translateY(0);
+  }
+
+  @media (max-width:760px){
+    .head{ flex-direction:column; align-items:flex-start; }
+    .actions{ width:100%; justify-content:flex-start; }
+    .orderActions{ width:100%; justify-content:stretch; }
+    .orderActions .btn{ flex:1; }
+  }
+</style>
+</head>
+
+<body>
+<div class="wrap">
+  <div class="card">
+    <div class="head">
+      <div>
+        <h1>Pedidos</h1>
+      </div>
+      <div class="actions">
+        <button class="btn" id="btnBackMenu">🍕 Atrás a la carta</button>
+        <button class="btn" id="btnBackAdmin">⬅️ Panel Admin</button>
+        <button class="btn danger" id="btnLogout">⎋ Cerrar sesión</button>
+      </div>
+    </div>
+
+    <div class="body">
+      <div id="status" class="muted">Cargando…</div>
+      <div id="list"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+  async function forceLogoutToWelcome(){
+    try { await fetch("/api/logout", { method:"POST", credentials:"include" }); } catch {}
+    window.location.replace("/welcome.html");
+  }
+  window.addEventListener("popstate", forceLogoutToWelcome);
+  window.addEventListener("pageshow", (e) => { if (e.persisted) forceLogoutToWelcome(); });
+  history.pushState({adminOrders:true}, "", location.href);
+
+  async function requireAdmin(){
+    const r = await fetch("/api/me", { credentials:"include" });
+    const d = await r.json();
+    if (!d.loggedIn || d.user?.role !== "ADMIN") {
+      window.location.replace("/welcome.html");
+      return null;
+    }
+    return d.user;
+  }
+
+  const statusEl = document.getElementById("status");
+  const listEl = document.getElementById("list");
+
+  let loading = false;
+  let refreshTimer = null;
+
+  function escapeHtml(str){
+    return String(str).replace(/[&<>"']/g, (m) => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;" }[m]));
+  }
+
+  function pillStatus(status){
+    const s = String(status || "RECEIVED").toUpperCase();
+    if (s === "READY") return `<span class="pill ready">LISTO</span>`;
+    if (s === "PREPARING") return `<span class="pill preparing">EN PREPARACIÓN</span>`;
+    return `<span class="pill received">RECIBIDO</span>`;
+  }
+
+  function formatLocal(iso){
+    if (!iso) return "";
+    try{
+      const d = new Date(iso);
+      if (Number.isNaN(d.getTime())) return String(iso);
+      return d.toLocaleString();
+    } catch { return String(iso); }
+  }
+
+  function renderOrder(o){
+    const order = o.order || {};
+    const personName = order.personName || o.user?.username || "cliente";
+    const created = o.created_at || "";
+    const items = Array.isArray(order.items) ? order.items : [];
+
+    const st = String(o.status || "RECEIVED").toUpperCase();
+    const isReady = st === "READY";
+    const isPreparing = st === "PREPARING";
+
+    const itemsHtml = items.map(it => {
+      const remove = Array.isArray(it.remove) ? it.remove : [];
+      const extras = Array.isArray(it.extras) ? it.extras : [];
+      const note = (it.note || "").trim();
+
+      let badges = "";
+      if (remove.length) badges += `<div><span class="badge remove">SIN</span>${escapeHtml(remove.join(", "))}</div>`;
+      if (extras.length) badges += `<div><span class="badge extra">EXTRA</span>${escapeHtml(extras.join(", "))}</div>`;
+      if (note) badges += `<div><span class="badge">NOTA</span>${escapeHtml(note)}</div>`;
+      if (!badges) badges = `<div class="muted">Sin cambios</div>`;
+
+      return `
+        <div class="it">
+          <div><b>${escapeHtml(it.qty)} × ${escapeHtml(it.nombre || "Producto")}</b></div>
+          <div class="badges">${badges}</div>
+        </div>
+      `;
+    }).join("");
+
+    const div = document.createElement("div");
+    div.className = "order" + (isReady ? " readyBg" : (isPreparing ? " prepBg" : ""));
+    div.dataset.id = String(o.id);
+    div.dataset.status = st;
+
+    // ✅ Botón eliminar (soft-delete admin)
+    div.innerHTML = `
+      <div class="orderTop">
+        <div>
+          <div class="orderTitle">Pedido #${escapeHtml(o.id)} ${pillStatus(o.status)}</div>
+          <div class="muted">${escapeHtml(personName)} — ${escapeHtml(o.user?.email || "")}</div>
+          <div class="muted">${escapeHtml(formatLocal(created))}</div>
+        </div>
+        <div class="orderActions">
+          <button class="btn softDanger" data-del="${escapeHtml(o.id)}">🗑️ Eliminar</button>
+        </div>
+      </div>
+      <div class="items">${itemsHtml}</div>
+      <div class="pressBar"><span></span></div>
+    `;
+    return div;
+  }
+
+  async function loadOrders(){
+    if (loading) return;
+    loading = true;
+
+    try {
+      statusEl.textContent = "Cargando pedidos…";
+      listEl.innerHTML = "";
+
+      let r;
+      try { r = await fetch("/api/admin/orders", { credentials:"include" }); }
+      catch { statusEl.textContent = "Error cargando pedidos (sin conexión)."; return; }
+
+      if (!r.ok) {
+        let txt = "";
+        try { const err = await r.json(); txt = err?.error ? String(err.error) : JSON.stringify(err); }
+        catch { try { txt = await r.text(); } catch {} }
+
+        if (r.status === 401 || r.status === 403) { await forceLogoutToWelcome(); return; }
+        statusEl.textContent = `Error cargando pedidos. (${r.status}) ${txt || ""}`;
+        return;
+      }
+
+      const d = await r.json();
+      const orders = d.orders || [];
+      statusEl.textContent = orders.length ? `Pedidos: ${orders.length}` : "No hay pedidos.";
+
+      orders.forEach(o => listEl.appendChild(renderOrder(o)));
+
+      // ✅ Eliminar
+      listEl.querySelectorAll("button[data-del]").forEach(btn => {
+        btn.addEventListener("click", async (e) => {
+          e.stopPropagation();
+          const id = btn.getAttribute("data-del");
+          const rr = await fetch(`/api/admin/orders/${id}`, { method:"DELETE", credentials:"include" });
+          if (!rr.ok) {
+            const err = await rr.json().catch(()=>({}));
+            alert(err.error || "Error eliminando pedido");
+            return;
+          }
+          await loadOrders();
+        });
+      });
+
+      // ✅ Click simple: alterna RECIBIDO ⇄ EN PREPARACIÓN (usa tu endpoint /prepare que ya alterna)
+      listEl.querySelectorAll(".order").forEach(card => {
+        card.addEventListener("click", async (e) => {
+          if (e.target.closest("button")) return; // no si tocó eliminar
+
+          // Si venías de long-press, evitamos que el "click" al soltar cambie estado otra vez
+          if (card.dataset.suppressClick === "1") {
+            card.dataset.suppressClick = "0";
+            return;
+          }
+
+          const id = card.dataset.id;
+          const rr = await fetch(`/api/admin/orders/${id}/prepare`, { method:"PATCH", credentials:"include" });
+          if (!rr.ok) {
+            const err = await rr.json().catch(()=>({}));
+            alert(err.error || "Error cambiando estado");
+            return;
+          }
+          await loadOrders();
+        });
+      });
+
+      // ✅ Mantener pulsado 2s: pasa a LISTO (READY)
+      attachLongPressHandlers();
+
+    } finally {
+      loading = false;
+    }
+  }
+
+  function attachLongPressHandlers(){
+    const HOLD_MS = 1000;
+
+    listEl.querySelectorAll(".order").forEach(card => {
+      let timer = null;
+      let raf = null;
+      let startTs = 0;
+      let fired = false;
+
+      const bar = card.querySelector(".pressBar > span");
+
+      function clearAll(){
+        if (timer) { clearTimeout(timer); timer = null; }
+        if (raf) { cancelAnimationFrame(raf); raf = null; }
+        card.classList.remove("pressing");
+        if (bar) bar.style.width = "0%";
+        startTs = 0;
+        fired = false;
+      }
+
+      function tick(){
+        if (!startTs) return;
+        const elapsed = performance.now() - startTs;
+        const p = Math.max(0, Math.min(1, elapsed / HOLD_MS));
+        if (bar) bar.style.width = `${Math.round(p*100)}%`;
+        if (!fired) raf = requestAnimationFrame(tick);
+      }
+
+      async function fireReady(){
+        const id = card.dataset.id;
+        const rr = await fetch(`/api/admin/orders/${id}/toggle`, { method:"PATCH", credentials:"include" });
+        if (!rr.ok) {
+          const err = await rr.json().catch(()=>({}));
+          alert(err.error || "Error pasando a LISTO");
+          return;
+        }
+        await loadOrders();
+      }
+
+      function onDown(e){
+        if (e.target.closest("button")) return; // si tocó eliminar, no long-press
+        // Evita scroll accidental en móvil mientras presiona (suave)
+        if (e.pointerType === "touch") { try { card.setPointerCapture(e.pointerId); } catch {} }
+
+        startTs = performance.now();
+        fired = false;
+        card.classList.add("pressing");
+        if (bar) bar.style.width = "0%";
+        raf = requestAnimationFrame(tick);
+
+        timer = setTimeout(async () => {
+          fired = true;
+          // para que al soltar no dispare el click y cambie estado
+          card.dataset.suppressClick = "1";
+          clearAll();
+          await fireReady();
+        }, HOLD_MS);
+      }
+
+      function onUpOrCancel(){
+        if (fired) return; // ya se gestionó
+        clearAll();
+      }
+
+      // Pointer Events (mejor para móvil/desktop)
+      card.addEventListener("pointerdown", onDown);
+      card.addEventListener("pointerup", onUpOrCancel);
+      card.addEventListener("pointercancel", onUpOrCancel);
+      card.addEventListener("pointerleave", onUpOrCancel);
+
+      // Si empieza a desplazarse, cancelamos el long-press
+      card.addEventListener("touchmove", onUpOrCancel, { passive:true });
+    });
+  }
+
+  document.getElementById("btnLogout").addEventListener("click", forceLogoutToWelcome);
+  document.getElementById("btnBackMenu").addEventListener("click", () => window.location.href = "/index.html");
+  document.getElementById("btnBackAdmin").addEventListener("click", () => window.location.href = "/admin.html");
+
+  (async () => {
+    const me = await requireAdmin();
+    if (!me) return;
+
+    await loadOrders();
+    refreshTimer = setInterval(loadOrders, 10000);
+
+    window.addEventListener("beforeunload", () => {
+      if (refreshTimer) clearInterval(refreshTimer);
+    });
+  })();
+</script>
+</body>
+</html>

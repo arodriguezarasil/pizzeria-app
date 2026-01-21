@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Admin</title>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600&family=Montserrat:wght@400;500;800;900&display=swap" rel="stylesheet">
+<style>
+  *{ box-sizing:border-box; }
+  body{
+    margin:0;
+    font-family:Montserrat,Arial;
+    background:#2b2b2b;
+    padding:18px;
+    color:#222;
+  }
+  .wrap{ max-width:980px; margin:0 auto; }
+  .card{
+    background:#faf7f2;
+    border-radius:18px;
+    box-shadow:0 18px 45px rgba(0,0,0,.35);
+    overflow:hidden;
+    position:relative;
+  }
+  .card::before{
+    content:"";
+    position:absolute;
+    top:0; left:0;
+    height:12px; width:100%;
+    background:linear-gradient(
+      to right,#1e7f43 0%,#1e7f43 33.33%,
+      #fff 33.33%,#fff 66.66%,
+      #8c1d18 66.66%,#8c1d18 100%
+    );
+  }
+  .head{
+    padding:18px;
+    background:#fff;
+    border-bottom:1px solid #eee;
+    display:flex;
+    justify-content:space-between;
+    gap:12px;
+    flex-wrap:wrap;
+    align-items:center;
+  }
+  h1{
+    margin:0;
+    font-family:"Playfair Display",serif;
+    color:#8c1d18;
+    letter-spacing:1px;
+    font-size:24px;
+  }
+  .sub{ margin-top:4px; color:#666; font-size:12px; font-weight:600; }
+
+  .actions{ display:flex; gap:10px; flex-wrap:wrap; }
+  .btn{
+    border:1px solid #ddd;
+    background:#fff;
+    padding:10px 12px;
+    border-radius:12px;
+    font-weight:900;
+    cursor:pointer;
+    transition: transform .12s ease, opacity .12s ease;
+    white-space:nowrap;
+  }
+  .btn:hover{ transform:translateY(-1px); opacity:.98; }
+  .btn.primary{ background:#1e7f43; border-color:#1e7f43; color:#fff; }
+  .btn.danger{ background:#8c1d18; border-color:#8c1d18; color:#fff; }
+
+  .body{ padding:18px; }
+  .muted{ color:#777; font-size:12px; }
+
+  .grid{
+    margin-top:14px;
+    display:grid;
+    grid-template-columns: 1fr 1fr;
+    gap:12px;
+  }
+  @media (max-width:860px){ .grid{ grid-template-columns:1fr; } }
+
+  .user{
+    background:#fff;
+    border:1px solid #eee;
+    border-radius:16px;
+    padding:14px;
+    box-shadow:0 10px 22px rgba(0,0,0,.06);
+    display:flex;
+    justify-content:space-between;
+    gap:12px;
+    align-items:flex-start;
+  }
+  .uLeft{ min-width:0; }
+  .uTitle{
+    font-weight:900;
+    font-size:15px;
+    color:#222;
+    display:flex;
+    align-items:center;
+    gap:8px;
+    flex-wrap:wrap;
+  }
+  .pill{
+    display:inline-block;
+    padding:3px 8px;
+    border-radius:999px;
+    font-size:11px;
+    font-weight:900;
+    border:1px solid #ddd;
+    background:#fff;
+  }
+  .pill.admin{ border-color:rgba(30,127,67,.35); background:rgba(30,127,67,.10); }
+  .pill.user{ border-color:rgba(140,29,24,.25); background:rgba(140,29,24,.06); }
+  .pill.approved{ border-color:rgba(30,127,67,.35); background:rgba(30,127,67,.10); }
+  .pill.pending{ border-color:rgba(251,188,5,.45); background:rgba(251,188,5,.12); }
+  .pill.rejected{ border-color:rgba(140,29,24,.35); background:rgba(140,29,24,.10); }
+
+  .uMeta{
+    margin-top:8px;
+    font-size:12px;
+    color:#666;
+    line-height:1.4;
+    word-break:break-word;
+  }
+  .uRight{ display:flex; gap:10px; align-items:center; }
+  .btn.small{ padding:9px 10px; border-radius:12px; font-weight:900; }
+
+  .topInfo{
+    display:flex;
+    justify-content:space-between;
+    align-items:center;
+    gap:12px;
+    flex-wrap:wrap;
+    margin-top:10px;
+  }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <div class="card">
+    <div class="head">
+      <div>
+        <h1>Panel Admin</h1>
+        <div class="sub">Gestiona usuarios y pedidos</div>
+      </div>
+      <div class="actions">
+        <button class="btn" id="btnBackMenu">🍕 Volver a la carta</button>
+        <button class="btn primary" id="btnOrders">📦 Ver pedidos</button>
+        <button class="btn danger" id="btnLogout">⎋ Cerrar sesión</button>
+      </div>
+    </div>
+
+    <div class="body">
+      <div class="topInfo">
+        <div class="muted" id="status">Cargando…</div>
+      </div>
+
+      <div id="grid" class="grid"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+  async function forceLogoutToWelcome(){
+    try { await fetch("/api/logout", { method:"POST", credentials:"include" }); } catch {}
+    window.location.replace("/welcome.html");
+  }
+  window.addEventListener("popstate", forceLogoutToWelcome);
+  window.addEventListener("pageshow", (e) => { if (e.persisted) forceLogoutToWelcome(); });
+  history.pushState({admin:true}, "", location.href);
+
+  async function requireAdmin(){
+    const r = await fetch("/api/me", { credentials:"include" });
+    const d = await r.json();
+    if (!d.loggedIn || d.user?.role !== "ADMIN") {
+      window.location.replace("/welcome.html");
+      return null;
+    }
+    return d.user;
+  }
+
+  const statusEl = document.getElementById("status");
+  const grid = document.getElementById("grid");
+
+  // ✅ auto refresh + anti-solape
+  let usersTimer = null;
+  let loadingUsers = false;
+
+  function escapeHtml(s){
+    return String(s).replace(/[&<>"']/g, (m)=>({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;" }[m]));
+  }
+
+  function pillRole(role){
+    const r = (role||"USER").toUpperCase();
+    if (r === "ADMIN") return `<span class="pill admin">ADMIN</span>`;
+    return `<span class="pill user">USER</span>`;
+  }
+  function pillStatus(st){
+    const s = (st||"PENDING").toUpperCase();
+    if (s === "APPROVED") return `<span class="pill approved">APPROVED</span>`;
+    if (s === "REJECTED") return `<span class="pill rejected">REJECTED</span>`;
+    return `<span class="pill pending">PENDING</span>`;
+  }
+
+  function renderUser(u){
+    const div = document.createElement("div");
+    div.className = "user";
+
+    const canDelete = (String(u.role).toUpperCase() !== "ADMIN");
+
+    div.innerHTML = `
+      <div class="uLeft">
+        <div class="uTitle">
+          ${escapeHtml(u.username)}
+          ${pillRole(u.role)}
+          ${pillStatus(u.status)}
+        </div>
+        <div class="uMeta">
+          <div><b>Email:</b> ${escapeHtml(u.email)}</div>
+          <div><b>ID:</b> ${escapeHtml(u.id)} · <b>Alta:</b> ${escapeHtml(u.created_at || "")}</div>
+        </div>
+      </div>
+
+      <div class="uRight">
+        ${canDelete ? `<button class="btn small danger" data-del="${u.id}">Eliminar</button>` : `<span class="muted">—</span>`}
+      </div>
+    `;
+    return div;
+  }
+
+  async function loadUsers(){
+    if (loadingUsers) return;
+    loadingUsers = true;
+
+    try{
+      statusEl.textContent = "Cargando usuarios…";
+      grid.innerHTML = "";
+
+      const r = await fetch("/api/admin/users", { credentials:"include" });
+      if (!r.ok) {
+        if (r.status === 401 || r.status === 403) return forceLogoutToWelcome();
+        statusEl.textContent = "Error cargando usuarios.";
+        return;
+      }
+
+      const d = await r.json();
+      const users = d.users || [];
+      statusEl.textContent = `Usuarios registrados: ${users.length}`;
+
+      users.forEach(u => grid.appendChild(renderUser(u)));
+
+      grid.querySelectorAll("button[data-del]").forEach(btn => {
+        btn.addEventListener("click", async () => {
+          const id = btn.getAttribute("data-del");
+          if (!confirm("¿Eliminar usuario?")) return;
+          const rr = await fetch(`/api/admin/users/${id}`, { method:"DELETE", credentials:"include" });
+          if (!rr.ok) {
+            const err = await rr.json().catch(()=>({}));
+            alert(err.error || "Error");
+            return;
+          }
+          await loadUsers();
+        });
+      });
+
+    } finally {
+      loadingUsers = false;
+    }
+  }
+
+  document.getElementById("btnLogout").addEventListener("click", forceLogoutToWelcome);
+  document.getElementById("btnBackMenu").addEventListener("click", ()=> location.href="/index.html");
+  document.getElementById("btnOrders").addEventListener("click", ()=> location.href="/admin-orders.html");
+
+  (async()=>{
+    const me = await requireAdmin();
+    if (!me) return;
+
+    await loadUsers();
+
+    // ✅ auto-refresh 15s
+    usersTimer = setInterval(loadUsers, 10000);
+
+    window.addEventListener("beforeunload", () => {
+      if (usersTimer) clearInterval(usersTimer);
+    });
+  })();
+</script>
+</body>
+</html>

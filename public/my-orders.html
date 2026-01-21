@@ -1,0 +1,375 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Mis pedidos</title>
+
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600&family=Montserrat:wght@400;500&display=swap" rel="stylesheet">
+
+<style>
+  *{ box-sizing:border-box; }
+  body{
+    margin:0;
+    font-family:'Montserrat', Arial, sans-serif;
+    background:#2b2b2b;
+    color:#222;
+    min-height:100vh;
+    padding:18px;
+  }
+
+  .wrap{ max-width:980px; margin:0 auto; }
+
+  .card{
+    background:#faf7f2;
+    border-radius:18px;
+    box-shadow:0 18px 45px rgba(0,0,0,.35);
+    overflow:hidden;
+    position:relative;
+  }
+
+  .card::before{
+    content:"";
+    position:absolute;
+    top:0; left:0;
+    width:100%; height:12px;
+    background: linear-gradient(
+      to right,
+      #1e7f43 0%,
+      #1e7f43 33.33%,
+      #ffffff 33.33%,
+      #ffffff 66.66%,
+      #8c1d18 66.66%,
+      #8c1d18 100%
+    );
+  }
+
+  .head{
+    padding:18px;
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    gap:12px;
+    border-bottom:1px solid #eee;
+    background:#fff;
+    flex-wrap:wrap;
+  }
+
+  h1{
+    margin:10px 0 0;
+    font-family:'Playfair Display', serif;
+    color:#8c1d18;
+    font-size:22px;
+    letter-spacing:1px;
+  }
+
+  .sub{ margin:4px 0 0; color:#666; font-size:12px; }
+
+  .actions{
+    display:flex;
+    gap:10px;
+    flex-wrap:wrap;
+    justify-content:flex-end;
+  }
+
+  .btn{
+    border:1px solid #ddd;
+    background:#fff;
+    padding:10px 12px;
+    border-radius:12px;
+    font-weight:900;
+    cursor:pointer;
+    transition: transform .12s ease, opacity .12s ease;
+    white-space:nowrap;
+  }
+  .btn:hover{ transform: translateY(-1px); opacity:.98; }
+
+  .btn.primary{
+    background:#1e7f43;
+    border-color:#1e7f43;
+    color:#fff;
+  }
+  .btn.danger{
+    background:#8c1d18;
+    border-color:#8c1d18;
+    color:#fff;
+  }
+
+  .body{ padding:18px; }
+  .muted{ color:#777; font-size:12px; }
+
+  .order{
+    background:#fff;
+    border:1px solid #eee;
+    border-radius:16px;
+    padding:14px;
+    margin-top:12px;
+  }
+
+  .orderTop{
+    display:flex;
+    justify-content:space-between;
+    gap:12px;
+    flex-wrap:wrap;
+    align-items:flex-start;
+  }
+
+  .orderTitle{ font-weight:900; }
+
+  .pill{
+    display:inline-block;
+    padding:3px 8px;
+    border-radius:999px;
+    font-size:11px;
+    font-weight:900;
+    border:1px solid #ddd;
+    background:#fff;
+    margin-left:8px;
+  }
+  .pill.received{ border-color:rgba(140,29,24,.25); background:rgba(140,29,24,.06); }
+  .pill.preparing{ border-color:rgba(251,188,5,.45); background:rgba(251,188,5,.12); }
+  .pill.ready{ border-color:rgba(30,127,67,.35); background:rgba(30,127,67,.10); }
+  .pill.cancelled{ border-color:rgba(140,29,24,.35); background:rgba(140,29,24,.10); }
+
+  .items{
+    margin-top:10px;
+    display:flex;
+    flex-direction:column;
+    gap:10px;
+  }
+
+  .it{
+    border:1px dashed #eee;
+    border-radius:14px;
+    padding:10px;
+  }
+  .it b{ font-weight:900; }
+
+  .badges{
+    margin-top:6px;
+    font-size:12px;
+    color:#444;
+    line-height:1.5;
+  }
+
+  .badge{
+    display:inline-block;
+    font-size:11px;
+    font-weight:900;
+    padding:3px 8px;
+    border-radius:999px;
+    border:1px solid #ddd;
+    background:#fff;
+    margin-right:6px;
+  }
+  .badge.remove{ border-color:rgba(140,29,24,.35); background:rgba(140,29,24,.08); }
+  .badge.extra{ border-color:rgba(30,127,67,.35); background:rgba(30,127,67,.10); }
+
+  @media (max-width:760px){
+    .actions{ justify-content:flex-start; width:100%; }
+  }
+</style>
+</head>
+
+<body>
+<div class="wrap">
+  <div class="card">
+    <div class="head">
+      <div>
+        <h1>Mis pedidos</h1>
+        <div class="sub">Historial de pedidos.</div>
+      </div>
+
+      <div class="actions">
+        <button class="btn" id="btnBackMenu">🍕 Atrás a la carta</button>
+        <button class="btn danger" id="btnLogout">⎋ Cerrar sesión</button>
+      </div>
+    </div>
+
+    <div class="body">
+      <div id="status" class="muted">Cargando…</div>
+      <div id="list"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+  async function forceLogoutToWelcome(){
+    try { await fetch("/api/logout", { method:"POST", credentials:"include" }); } catch {}
+    window.location.replace("/welcome.html");
+  }
+  window.addEventListener("popstate", forceLogoutToWelcome);
+  window.addEventListener("pageshow", (e) => { if (e.persisted) forceLogoutToWelcome(); });
+  history.pushState({myOrders:true}, "", location.href);
+
+  async function requireUser(){
+    const r = await fetch("/api/me", { credentials:"include" });
+    const d = await r.json();
+    if (!d.loggedIn) {
+      window.location.replace("/welcome.html");
+      return null;
+    }
+    if (d.user?.role === "ADMIN") {
+      window.location.replace("/admin.html");
+      return null;
+    }
+    return d.user;
+  }
+
+  const statusEl = document.getElementById("status");
+  const listEl = document.getElementById("list");
+
+  let loading = false;
+  let refreshTimer = null;
+
+  function escapeHtml(str){
+    return String(str).replace(/[&<>"']/g, (m) => ({
+      "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"
+    }[m]));
+  }
+
+  function normalizeLegacyStatus(s){
+    const up = String(s || "").toUpperCase();
+    // compat por si hay pedidos antiguos en OPEN/DONE
+    if (up === "OPEN") return "RECEIVED";
+    if (up === "DONE") return "READY";
+    if (up === "PENDING") return "RECEIVED";
+    return up || "RECEIVED";
+  }
+
+  function pillStatus(status){
+    const s = normalizeLegacyStatus(status);
+    if (s === "READY") return `<span class="pill ready">LISTO</span>`;
+    if (s === "PREPARING") return `<span class="pill preparing">EN PREPARACIÓN</span>`;
+    if (s === "CANCELLED") return `<span class="pill cancelled">CANCELADO</span>`;
+    return `<span class="pill received">RECIBIDO</span>`;
+  }
+
+  function formatLocal(iso){
+    if (!iso) return "";
+    try{
+      const d = new Date(iso);
+      if (Number.isNaN(d.getTime())) return String(iso);
+      return d.toLocaleString();
+    } catch { return String(iso); }
+  }
+
+  function renderOrder(o){
+    const order = o.order || {};
+    const created = o.created_at || "";
+    const items = Array.isArray(order.items) ? order.items : [];
+    const st = normalizeLegacyStatus(o.status);
+
+    const itemsHtml = items.map(it => {
+      const remove = Array.isArray(it.remove) ? it.remove : [];
+      const extras = Array.isArray(it.extras) ? it.extras : [];
+      const note = (it.note || "").trim();
+
+      let badges = "";
+      if (remove.length) badges += `<div><span class="badge remove">SIN</span>${escapeHtml(remove.join(", "))}</div>`;
+      if (extras.length) badges += `<div><span class="badge extra">EXTRA</span>${escapeHtml(extras.join(", "))}</div>`;
+      if (note) badges += `<div><span class="badge">NOTA</span>${escapeHtml(note)}</div>`;
+      if (!badges) badges = `<div class="muted">Sin cambios</div>`;
+
+      return `
+        <div class="it">
+          <div><b>${escapeHtml(it.qty)} × ${escapeHtml(it.nombre || "Producto")}</b></div>
+          <div class="badges">${badges}</div>
+        </div>
+      `;
+    }).join("");
+
+    const div = document.createElement("div");
+    div.className = "order";
+    div.innerHTML = `
+      <div class="orderTop">
+        <div>
+          <div class="orderTitle">Pedido #${escapeHtml(o.id)} ${pillStatus(st)}</div>
+          <div class="muted">${escapeHtml(formatLocal(created))}</div>
+        </div>
+      </div>
+      <div class="items">${itemsHtml}</div>
+    `;
+    return div;
+  }
+   const orderDom = new Map();
+   let firstLoad = true;
+
+  async function loadMyOrders(){
+  if (loading) return;
+  loading = true;
+
+  try{
+    if (firstLoad) statusEl.textContent = "Cargando pedidos…";
+
+    let r;
+    try { r = await fetch("/api/my/orders", { credentials:"include" }); }
+    catch { statusEl.textContent = "Error cargando pedidos (sin conexión)."; return; }
+
+    if (!r.ok){
+      let txt = "";
+      try { const err = await r.json(); txt = err?.error ? String(err.error) : JSON.stringify(err); }
+      catch { try { txt = await r.text(); } catch {} }
+
+      if (r.status === 401 || r.status === 403) { await forceLogoutToWelcome(); return; }
+      statusEl.textContent = `Error cargando pedidos. (${r.status}) ${txt || ""}`;
+      return;
+    }
+
+    const d = await r.json();
+    const orders = Array.isArray(d.orders) ? d.orders : [];
+    statusEl.textContent = orders.length ? `Pedidos: ${orders.length}` : "Todavía no tienes pedidos.";
+
+    const incomingIds = new Set(orders.map(o => String(o.id)));
+
+    // eliminar los que ya no existen
+    for (const [id, el] of orderDom.entries()){
+      if (!incomingIds.has(id)){
+        el.remove();
+        orderDom.delete(id);
+      }
+    }
+
+    // crear/actualizar
+    for (const o of orders){
+      const id = String(o.id);
+      if (!orderDom.has(id)){
+        const el = renderOrder(o);
+        orderDom.set(id, el);
+        listEl.appendChild(el);
+      } else {
+        const oldEl = orderDom.get(id);
+        const newEl = renderOrder(o);
+
+        // actualizar sin borrar toda la lista
+        oldEl.className = newEl.className;
+        oldEl.innerHTML = newEl.innerHTML;
+      }
+    }
+
+    firstLoad = false;
+
+  } finally {
+    loading = false;
+  }
+}
+
+
+  document.getElementById("btnLogout").addEventListener("click", forceLogoutToWelcome);
+  document.getElementById("btnBackMenu").addEventListener("click", () => window.location.href = "/index.html");
+
+  (async () => {
+    const me = await requireUser();
+    if (!me) return;
+
+    await loadMyOrders();
+    refreshTimer = setInterval(loadMyOrders, 10000);
+
+    window.addEventListener("beforeunload", () => {
+      if (refreshTimer) clearInterval(refreshTimer);
+    });
+  })();
+</script>
+
+</body>
+</html>
