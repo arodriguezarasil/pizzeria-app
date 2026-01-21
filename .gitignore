@@ -1,0 +1,5 @@
+/server/.env
+/server/pizzeria.sqlite
+/server/pizzeria.sqlite-shm
+/server/pizzeria.sqlite-wal
+/server/node_modules/
